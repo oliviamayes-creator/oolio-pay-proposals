@@ -8,10 +8,11 @@
     "start": "next start"
   },
   "dependencies": {
-    "next": "14.2.22",
-    "react": "18.2.0",
-    "react-dom": "18.2.0",
     "html-to-image": "1.11.11",
-    "jspdf": "2.5.1"
+    "jspdf": "2.5.1",
+    "next": "14.2.22",
+    "qrcode": "^1.5.4",
+    "react": "18.2.0",
+    "react-dom": "18.2.0"
   }
 }

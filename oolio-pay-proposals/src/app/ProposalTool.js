@@ -1,5 +1,5 @@
 'use client';
-import { useState, useRef, useCallback } from 'react';
+import { useState, useRef, useCallback, useEffect } from 'react';
 
 // ─── Brand Configs (images served from /public/images/) ──────────────────────
 const BRANDS = {
@@ -16,6 +16,7 @@ const BRANDS = {
 };
 
 const TERMINAL_IMG = '/images/terminal.png';
+const AMEX_APPLY_URL = 'https://www.americanexpress.com/en-au/business/merchant/manage-account.html#get-started';
 
 // Oolio Pay inline SVG
 const OOLIO_PAY_SVG = 'M592.8,302c2.1,0,4.1,1.1,5.1,2.9l35.7,59.3l35.9-59.3c1.1-1.8,3-2.9,5.1-2.9h45.7c3.3,0,6,2.7,6,6c0,1.1-.3,2.2-.9,3.1l-63.6,105.6V472c0,5.5-4.5,10-10,10h-41.8c-5.5,0-10-4.5-10-10v-56.1l-63.6-104.8c-1.7-2.8-.8-6.5,2-8.2c.9-.6,2-.9,3.1-.9H592.8zM479.4,302c2.5,0,4.6,1.5,5.6,3.8l67.7,168c1.2,3.1-.2,6.6-3.3,7.8c-.7.3-1.5.4-2.2.4h-44.7c-2.5,0-4.8-1.6-5.6-4l-9.7-27.4h-63l-9.7,27.4c-.9,2.4-3.1,4-5.6,4h-43.8c-3.3,0-6-2.7-6-6c0-.8.1-1.5.4-2.2l67.7-168c.9-2.3,3.1-3.8,5.6-3.8H479.4zM283.3,302c16.8,0,31.4,2.7,43.8,8.2s22,13.4,28.8,23.7s10.1,22.3,10.1,36s-3.4,25.7-10.1,36s-16.3,18.2-28.8,23.7s-27,8.2-43.8,8.2h-26.2V472c0,5.5-4.5,10-10,10H206c-5.5,0-10-4.5-10-10V312c0-5.5,4.5-10,10-10L283.3,302zM454.9,365.7c-.6.2-1,.6-1.2,1.2l-14.2,40h32.2l-14.2-40C457,365.9,455.9,365.4,454.9,365.7zM279.7,348.7h-22.3v41.8h22.3c8.3,0,14.5-1.8,18.7-5.5s6.2-8.8,6.2-15.4s-2.1-11.8-6.2-15.4S288,348.7,279.7,348.7zM805,0c66.8,0,121,54.2,121,121s-54.2,121-121,121s-121-54.2-121-121S738.2,0,805,0zM805,81c-22.1,0-40,17.9-40,40s17.9,40,40,40s40-17.9,40-40S827.1,81,805,81zM604,0h60c5.5,0,10,4.5,10,10v222c0,5.5-4.5,10-10,10h-60c-5.5,0-10-4.5-10-10V10C594,4.5,598.5,0,604,0zM424,242c-5.5,0-10-4.5-10-10V10c0-5.5,4.5-10,10-10h60c5.5,0,10,4.5,10,10v152h80c5.5,0,10,4.5,10,10v60c0,5.5-4.5,10-10,10H424zM283,0c66.8,0,121,54.2,121,121s-54.2,121-121,121c-31.1,0-59.6-11.8-81-31.1c-21.4,19.3-49.9,31.1-81,31.1C54.2,242,0,187.8,0,121S54.2,0,121,0c31.1,0,59.6,11.8,81,31.1C223.4,11.8,251.9,0,283,0zM283,81c-22.1,0-40,17.9-40,40s17.9,40,40,40s40-17.9,40-40S305.1,81,283,81zM121,81c-22.1,0-40,17.9-40,40s17.9,40,40,40s40-17.9,40-40S143.1,81,121,81z';
@@ -102,7 +103,7 @@ function SubsidyFields({data,onChange}){
 }
 
 // ─── Preview Card ────────────────────────────────────────────────────────────
-function PreviewCard({brand,merchant,existing,options,customerLogo,repName,amexDirect}){
+function PreviewCard({brand,merchant,existing,options,customerLogo,repName,amexDirect,amexQrDataUrl}){
   const b = BRANDS[brand];
   const optCount = options.length;
   const rateTypeObj = id => RATE_TYPES.find(t=>t.id===id);
@@ -171,8 +172,16 @@ function PreviewCard({brand,merchant,existing,options,customerLogo,repName,amexD
         <img src={TERMINAL_IMG} alt="" style={{float:'right',width:100,objectFit:'contain',marginLeft:14,marginTop:-4}}/>
         <div style={{fontSize:8,color:b.primary,fontWeight:600,letterSpacing:0.3,opacity:0.6,marginBottom:4}}>All rates and fees shown are exclusive of GST.</div>
         {amexDirect&&(
-          <div style={{fontSize:8,color:'#aaa',lineHeight:1.5,marginBottom:4}}>
-            <strong style={{color:b.primary,opacity:0.8}}>AMEX Merchant Facility:</strong> This proposal assumes the Merchant will obtain their own American Express Merchant Account. Upon approval, the account will be configured for acceptance via the supplied Oolio payment terminals. <a href="https://www.americanexpress.com/en-au/business/merchant/manage-account.html#get-started" style={{color:b.primary}}>Apply here</a>.
+          <div style={{display:'flex',alignItems:'flex-start',gap:8,marginBottom:4}}>
+            {amexQrDataUrl&&(
+              <div style={{textAlign:'center',flexShrink:0}}>
+                <img src={amexQrDataUrl} alt="Scan to apply for an AMEX Merchant Account" style={{width:44,height:44,display:'block',border:'1px solid #eee',borderRadius:3}}/>
+                <div style={{fontSize:6,color:'#bbb',marginTop:2,whiteSpace:'nowrap'}}>Scan to apply</div>
+              </div>
+            )}
+            <div style={{fontSize:8,color:'#aaa',lineHeight:1.5}}>
+              <strong style={{color:b.primary,opacity:0.8}}>AMEX Merchant Facility:</strong> This proposal assumes the Merchant will obtain their own American Express Merchant Account. Upon approval, the account will be configured for acceptance via the supplied Oolio payment terminals. <a id="amex-apply-link" href={AMEX_APPLY_URL} style={{color:b.primary}}>Apply here</a>.
+            </div>
           </div>
         )}
         <div style={{fontSize:8,color:'#aaa',lineHeight:1.5}}>
@@ -192,6 +201,8 @@ export default function ProposalTool(){
   const [options,setOptions]=useState([emptyOption()]);
   const [repName,setRepName]=useState('');
   const [amexDirect,setAmexDirect]=useState(false);
+  const [amexQrDataUrl,setAmexQrDataUrl]=useState(null);
+  const [amexLinkCopied,setAmexLinkCopied]=useState(false);
   const [exporting,setExporting]=useState(false);
   const [renderedPng,setRenderedPng]=useState(null);
   const outputRef=useRef(null);
@@ -201,6 +212,27 @@ export default function ProposalTool(){
   const addOption=()=>{if(options.length<3)setOptions([...options,emptyOption()]);};
   const removeOption=i=>{if(options.length>1)setOptions(options.filter((_,j)=>j!==i));};
   const updateOption=(i,data)=>setOptions(options.map((o,j)=>j===i?data:o));
+
+  useEffect(()=>{
+    if(!amexDirect){setAmexQrDataUrl(null);return;}
+    let cancelled=false;
+    (async()=>{
+      const QRCode=await import('qrcode');
+      // Generated well above display size (44px) so it stays crisp once html-to-image
+      // re-rasterizes the whole card at pixelRatio 3 for PNG/PDF export.
+      const dataUrl=await QRCode.toDataURL(AMEX_APPLY_URL,{margin:1,width:240});
+      if(!cancelled)setAmexQrDataUrl(dataUrl);
+    })();
+    return()=>{cancelled=true;};
+  },[amexDirect]);
+
+  const copyAmexLink=useCallback(async()=>{
+    try{
+      await navigator.clipboard.writeText(AMEX_APPLY_URL);
+      setAmexLinkCopied(true);
+      setTimeout(()=>setAmexLinkCopied(false),2000);
+    }catch(err){console.error('Copy failed:',err);alert('Could not copy link. Check console.');}
+  },[]);
 
   const doExport=useCallback(async(format)=>{
     setExporting(true);
@@ -220,6 +252,21 @@ export default function ProposalTool(){
         const pdfW=pxW*0.264583/sc,pdfH=pxH*0.264583/sc;
         const doc=new jsPDF({orientation:pdfW>pdfH?'l':'p',unit:'mm',format:[pdfW,pdfH]});
         doc.addImage(dataUrl,'PNG',0,0,pdfW,pdfH);
+        // Overlay a real clickable link on top of the flattened "Apply here" text —
+        // a PNG/copy-image is just pixels and can never carry a link, but the PDF can.
+        const applyLink=document.getElementById('amex-apply-link');
+        if(applyLink){
+          const pxToMm=0.264583;
+          const containerRect=el.getBoundingClientRect();
+          const linkRect=applyLink.getBoundingClientRect();
+          doc.link(
+            (linkRect.left-containerRect.left)*pxToMm,
+            (linkRect.top-containerRect.top)*pxToMm,
+            linkRect.width*pxToMm,
+            linkRect.height*pxToMm,
+            {url:AMEX_APPLY_URL}
+          );
+        }
         doc.save(`${merchant.name||'proposal'}_${b.name}_pay_proposal.pdf`);
       }
     }catch(err){console.error('Export failed:',err);alert('Export failed. Check console.');}
@@ -306,6 +353,11 @@ export default function ProposalTool(){
           <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:12}}>
             <div style={{fontSize:11,fontWeight:700,color:'#999',textTransform:'uppercase',letterSpacing:1.5}}>Live Preview</div>
             <div style={{display:'flex',gap:8}}>
+              {amexDirect&&(
+                <button onClick={copyAmexLink} style={{padding:'7px 14px',borderRadius:8,border:`1.5px solid ${b.primary}40`,background:'#fff',color:b.primary,fontWeight:600,fontSize:11,cursor:'pointer',fontFamily:'inherit'}}>
+                  {amexLinkCopied?'✓ Copied':'🔗 Copy AMEX Link'}
+                </button>
+              )}
               <button onClick={()=>doExport('render')} disabled={exporting} style={{padding:'7px 14px',borderRadius:8,border:`1.5px solid ${b.primary}40`,background:'#fff',color:b.primary,fontWeight:600,fontSize:11,cursor:exporting?'wait':'pointer',fontFamily:'inherit',opacity:exporting?0.6:1}}>
                 {exporting?'...':'📋 Copy Image'}
               </button>
@@ -318,7 +370,7 @@ export default function ProposalTool(){
             </div>
           </div>
           <div style={{display:'inline-block'}} ref={outputRef}>
-            <PreviewCard brand={brand} merchant={merchant} existing={existing} options={options} customerLogo={customerLogo} repName={repName} amexDirect={amexDirect}/>
+            <PreviewCard brand={brand} merchant={merchant} existing={existing} options={options} customerLogo={customerLogo} repName={repName} amexDirect={amexDirect} amexQrDataUrl={amexQrDataUrl}/>
           </div>
           {renderedPng&&(
             <div style={{marginTop:16}}>
