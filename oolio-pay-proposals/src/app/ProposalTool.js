@@ -42,7 +42,6 @@ const rateLabel = (f,amexDirect) => f==='amex' && amexDirect ? 'AMEX Rate (Direc
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 const fmt = v => { const n = parseFloat(v); return isNaN(n) ? '—' : n.toFixed(2)+'%'; };
 const fmtDollar = v => { const n = parseFloat(v); return isNaN(n) ? '—' : '$'+n.toLocaleString('en-AU',{minimumFractionDigits:2,maximumFractionDigits:2}); };
-const fmtPct = v => { const n = parseFloat(v); return isNaN(n) ? '—' : n.toFixed(0)+'%'; };
 const fmtRateFee = (rate,fee) => {
   const r = fmt(rate);
   const feeNum = parseFloat(fee);
@@ -187,16 +186,35 @@ function PreviewCard({brand,merchant,existing,options,customerLogo,repName,amexD
       return <RowItem key={f} label={label} value={fmtRateFee(cur.rate,cur.fee)} muted={muted}/>;
     });
   };
+  // Two-line price stack: strikethrough RRP on top (only when a discount is
+  // actually set), then what the merchant pays — FREE in green at 100% off,
+  // otherwise the calculated price in brand colour. No discount = just the
+  // plain amount, no strikethrough.
+  const PriceRow = ({label,rrpNum,discPctRaw,muted})=>{
+    if(isNaN(rrpNum))return null;
+    const discNum=parseFloat(discPctRaw);
+    const hasDisc=!isNaN(discNum)&&discNum>0;
+    const final=hasDisc?rrpNum-rrpNum*(discNum/100):rrpNum;
+    const isFree=hasDisc&&discNum>=100;
+    const freeColor=muted?'#8fbfae':'#0F6E56';
+    const priceColor=muted?'#999':b.primary;
+    return(
+      <div style={{display:'flex',justifyContent:'space-between',alignItems:'baseline',padding:'3px 0',borderBottom:`1px solid ${muted?'#eee':b.primary+'15'}`,gap:8}}>
+        <span style={{fontSize:9,color:muted?'#aaa':'#555',whiteSpace:'nowrap',flexShrink:0}}>{label}</span>
+        <div style={{textAlign:'right',flex:'1 1 auto',minWidth:0}}>
+          {hasDisc&&<div style={{fontSize:8,color:muted?'#ccc':'#bbb',textDecoration:'line-through'}}>{fmtMoney(rrpNum)}/mo</div>}
+          <div style={{fontSize:9,fontWeight:700,color:isFree?freeColor:priceColor}}>{isFree?'FREE':`${fmtMoney(final)}/mo`}</div>
+        </div>
+      </div>
+    );
+  };
   const renderSubsidy = (opt,muted)=>{
     const items=[];
-    if(opt.saasDiscount||opt.saasAmount){const p=[];if(opt.saasDiscount)p.push(fmtPct(opt.saasDiscount)+' off');if(opt.saasAmount)p.push(fmtDollar(opt.saasAmount));items.push(<RowItem key="saas" label="SaaS" value={p.join(' · ')} muted={muted}/>);}
-    if(opt.advantageDiscount||opt.advantageAmount){const p=[];if(opt.advantageDiscount)p.push(fmtPct(opt.advantageDiscount)+' off');if(opt.advantageAmount)p.push(fmtDollar(opt.advantageAmount));items.push(<RowItem key="adv" label="Advantage+" value={p.join(' · ')} muted={muted}/>);}
+    if(opt.saasDiscount||opt.saasAmount){items.push(<PriceRow key="saas" label="SaaS" rrpNum={parseFloat(opt.saasAmount)} discPctRaw={opt.saasDiscount} muted={muted}/>);}
+    if(opt.advantageDiscount||opt.advantageAmount){items.push(<PriceRow key="adv" label="Advantage+" rrpNum={parseFloat(opt.advantageAmount)} discPctRaw={opt.advantageDiscount} muted={muted}/>);}
     const count=parseFloat(opt.terminalCount);
     if(!isNaN(count)&&count>0){
-      const discPct=parseFloat(opt.terminalDiscount)||0;
-      const full=count*TERMINAL_MONTHLY_COST;
-      const owed=full-full*(discPct/100);
-      items.push(<RowItem key="term" label={`EFTPOS Terminal ×${count}`} value={`${fmtMoney(owed)}/mo ex GST covered${discPct?` (${discPct}% off RRP)`:''}`} muted={muted}/>);
+      items.push(<PriceRow key="term" label={`EFTPOS Terminal ×${count}`} rrpNum={count*TERMINAL_MONTHLY_COST} discPctRaw={opt.terminalDiscount} muted={muted}/>);
     }
     return items;
   };
@@ -549,7 +567,7 @@ export default function ProposalTool(){
       <div style={{background:b.gradient,padding:'14px 24px',display:'flex',alignItems:'center',justifyContent:'space-between',boxShadow:'0 2px 12px rgba(0,0,0,0.15)'}}>
         <div style={{display:'flex',alignItems:'center',gap:16}}>
           <OolioPayLogo size={24} fill="#fff"/>
-          <span style={{color:'#fff',fontSize:15,fontWeight:700,letterSpacing:0.5}}>Rate Proposal Generator</span>
+          <span style={{color:'#fff',fontSize:15,fontWeight:700,letterSpacing:0.5}}>Oolio Pay | RBA Recontracting Proposal Generator</span>
         </div>
         <div style={{display:'flex',alignItems:'center',gap:12}}>
           <span style={{color:'#fff',fontSize:10,opacity:draftSavedVisible?0.7:0,transition:'opacity 0.4s'}}>Draft saved</span>

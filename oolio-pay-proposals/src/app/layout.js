@@ -3,7 +3,7 @@ import { Inter } from 'next/font/google';
 const inter = Inter({ subsets: ['latin'], weight: ['400','500','600','700','800','900'] });
 
 export const metadata = {
-  title: 'Oolio Pay — Rate Proposal Generator',
+  title: 'Oolio Pay | RBA Recontracting Proposal Generator',
   description: 'Generate branded rate proposals for Oolio Pay customers',
 };
 
