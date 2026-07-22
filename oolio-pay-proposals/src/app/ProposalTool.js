@@ -63,6 +63,8 @@ const EXPIRY_OPTIONS = [
 const addDays = (days) => { const d=new Date(); d.setDate(d.getDate()+Number(days)); return d.toLocaleDateString('en-AU',{day:'numeric',month:'long',year:'numeric'}); };
 const DRAFT_KEY = 'oolio_proposal_draft';
 const BANNER_DISMISS_KEY = 'oolio_banner_dismissed';
+const RECENT_KEY = 'oolio_recent_proposals';
+const MAX_RECENT = 5;
 const TERMINAL_MONTHLY_COST = 28;
 const CONTRACT_TERMS = [
   { id:'', label:'— Not set —' },
@@ -293,6 +295,7 @@ export default function ProposalTool(){
   const [linkCopied,setLinkCopied]=useState(false);
   const [bannerDismissed,setBannerDismissed]=useState(false);
   const [hydrated,setHydrated]=useState(false);
+  const [recentProposals,setRecentProposals]=useState([]);
   const [exporting,setExporting]=useState(false);
   const [renderedPng,setRenderedPng]=useState(null);
   const outputRef=useRef(null);
@@ -337,6 +340,18 @@ export default function ProposalTool(){
   const addOption=()=>{if(options.length<3)setOptions([...options,emptyOption()]);};
   const removeOption=i=>{if(options.length>1)setOptions(options.filter((_,j)=>j!==i));};
   const updateOption=(i,data)=>setOptions(options.map((o,j)=>j===i?data:o));
+
+  // Only pulls known merchant facts (SaaS/Advantage+ amounts, terminal count) —
+  // rate type, rates, and every discount % are deliberately left for the rep to
+  // set fresh on the new offer rather than assumed from the existing contract.
+  const copyFromExisting=(i)=>{
+    updateOption(i,{
+      ...options[i],
+      saasAmount:existing.saasAmount,
+      advantageAmount:existing.advantageAmount,
+      terminalCount:existing.terminalCount,
+    });
+  };
 
   useEffect(()=>{
     if(!amexDirect){setAmexQrDataUrl(null);return;}
@@ -447,12 +462,52 @@ export default function ProposalTool(){
     try{sessionStorage.setItem(BANNER_DISMISS_KEY,'1');}catch(err){/* ignore */}
   },[]);
 
+  // Snapshot the full form state on every export so a rep can pull a past
+  // proposal back up later without re-entering everything from scratch.
+  const saveRecentProposal=useCallback(()=>{
+    try{
+      const snapshot={
+        id:Date.now()+'-'+Math.random().toString(36).slice(2),
+        merchantName:merchant.name||'Untitled',
+        brand,
+        date:new Date().toISOString(),
+        state:{...collectState(),customerLogo},
+      };
+      setRecentProposals(prev=>{
+        const next=[snapshot,...prev].slice(0,MAX_RECENT);
+        try{localStorage.setItem(RECENT_KEY,JSON.stringify(next));}catch(err){console.error('Failed to save recent proposals:',err);}
+        return next;
+      });
+    }catch(err){console.error('Failed to snapshot recent proposal:',err);}
+  },[merchant.name,brand,collectState,customerLogo]);
+
+  const restoreRecent=useCallback((id)=>{
+    const item=recentProposals.find(r=>r.id===id);
+    if(item)applyState(item.state);
+  },[recentProposals,applyState]);
+
+  const removeRecent=useCallback((id)=>{
+    setRecentProposals(prev=>{
+      const next=prev.filter(r=>r.id!==id);
+      try{localStorage.setItem(RECENT_KEY,JSON.stringify(next));}catch(err){console.error('Failed to update recent proposals:',err);}
+      return next;
+    });
+  },[]);
+
+  useEffect(()=>{
+    try{
+      const raw=localStorage.getItem(RECENT_KEY);
+      if(raw)setRecentProposals(JSON.parse(raw));
+    }catch(err){console.error('Failed to load recent proposals:',err);}
+  },[]);
+
   const doExport=useCallback(async(format)=>{
     setExporting(true);
     try{
       const el=document.getElementById('proposal-output');if(!el)return;
       const{toPng}=await import('html-to-image');
       const dataUrl=await toPng(el,{pixelRatio:3,cacheBust:true,style:{transform:'scale(1)',transformOrigin:'top left'}});
+      saveRecentProposal();
       if(format==='png'){
         const link=document.createElement('a');link.download=`${merchant.name||'proposal'}_${b.name}_pay_proposal.png`;link.href=dataUrl;link.click();
         setRenderedPng(dataUrl);
@@ -484,7 +539,7 @@ export default function ProposalTool(){
       }
     }catch(err){console.error('Export failed:',err);alert('Export failed. Check console.');}
     finally{setExporting(false);}
-  },[merchant.name,b.name]);
+  },[merchant.name,b.name,saveRecentProposal]);
 
   const sectionTitle=br=>({fontSize:13,fontWeight:700,color:br.primary,textTransform:'uppercase',letterSpacing:1,marginBottom:10,paddingBottom:6,borderBottom:`2px solid ${br.primary}20`});
 
@@ -515,6 +570,17 @@ export default function ProposalTool(){
       <div style={{display:'flex',gap:24,padding:24,maxWidth:1400,margin:'0 auto'}}>
         {/* Left Panel */}
         <div style={{width:360,flexShrink:0}}>
+          {recentProposals.length>0&&(
+            <div style={{background:'#fff',borderRadius:12,padding:18,marginBottom:16,boxShadow:'0 1px 6px rgba(0,0,0,0.06)'}}>
+              <div style={sectionTitle(b)}>Recent Proposals ({recentProposals.length})</div>
+              {recentProposals.map(r=>(
+                <div key={r.id} onClick={()=>restoreRecent(r.id)} style={{display:'flex',justifyContent:'space-between',alignItems:'center',gap:8,padding:'7px 8px',borderRadius:6,cursor:'pointer',fontSize:12,color:'#555',background:'#f7f7f8',marginBottom:6}}>
+                  <span style={{overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{r.merchantName} · {BRANDS[r.brand]?.name||r.brand} · {new Date(r.date).toLocaleDateString('en-AU',{day:'numeric',month:'short'})}</span>
+                  <button onClick={e=>{e.stopPropagation();removeRecent(r.id);}} style={{flexShrink:0,background:'none',border:'none',color:'#c00',cursor:'pointer',fontSize:14,fontWeight:700,lineHeight:1,padding:'0 2px'}}>×</button>
+                </div>
+              ))}
+            </div>
+          )}
           <div style={{background:'#fff',borderRadius:12,padding:18,marginBottom:16,boxShadow:'0 1px 6px rgba(0,0,0,0.06)'}}>
             <div style={sectionTitle(b)}>Merchant Info</div>
             <Field label="Merchant / Venue Name" value={merchant.name} onChange={v=>setMerchant({...merchant,name:v})} placeholder="e.g. The Local Pub"/>
@@ -555,6 +621,9 @@ export default function ProposalTool(){
                 <span>{options.length===1?'New Offer':`New Option ${i+1}`}</span>
                 {options.length>1&&<button onClick={()=>removeOption(i)} style={{fontSize:11,color:'#c00',background:'none',border:'none',cursor:'pointer'}}>Remove</button>}
               </div>
+              <button onClick={()=>copyFromExisting(i)} style={{width:'100%',fontSize:11,color:b.primary,background:'none',border:`1px dashed ${b.primary}`,borderRadius:6,padding:'6px 10px',cursor:'pointer',fontFamily:'inherit',marginBottom:10}}>
+                Copy existing SaaS, Adv+ & terminals →
+              </button>
               <Select label="In-Store Rate Type" value={opt.rateType} onChange={v=>updateOption(i,{...opt,rateType:v})} options={RATE_TYPES}/>
               <RateFields rateType={opt.rateType} rates={opt.rates} onChange={r=>updateOption(i,{...opt,rates:r})} amexDirect={amexDirect} existingRates={existing.rates}/>
               <Checkbox label="Add E-Commerce Rates" checked={opt.hasEcom} onChange={v=>updateOption(i,{...opt,hasEcom:v})}/>
