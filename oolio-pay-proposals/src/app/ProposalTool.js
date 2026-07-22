@@ -112,7 +112,9 @@ function RateFields({rateType,rates,onChange,amexDirect,existingRates,isExisting
   return(<div>
     {type.fields.map(f=>{
       const cur = rates[f]||{rate:'',fee:''};
-      const isLockedAmex = f==='amex' && amexDirect;
+      // AMEX Direct describes the NEW offer's terms — the merchant's existing
+      // contract may still have a real AMEX rate on it, so leave that editable.
+      const isLockedAmex = f==='amex' && amexDirect && !isExisting;
       if(isLockedAmex){
         return(<div key={f} style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:'0 12px'}}>
           <Field label={rateLabel(f,amexDirect)+' (ex GST %)'} value="" onChange={()=>{}} placeholder="Merchant direct" suffix="%" disabled/>
@@ -129,8 +131,9 @@ function RateFields({rateType,rates,onChange,amexDirect,existingRates,isExisting
       }
       if(!rateWarning && !isNaN(rateNum) && rateNum>4.5) rateWarning='This rate looks high — double check before sending';
       const feeWarning = (!isNaN(feeNum) && feeNum>1) ? `Fixed fees are usually under $1.00 — did you mean $${(feeNum/100).toFixed(2)}?` : null;
+      const label = (f==='amex'&&isExisting) ? RATE_LABELS.amex : rateLabel(f,amexDirect);
       return(<div key={f} style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:'0 12px'}}>
-        <Field label={rateLabel(f,amexDirect)+' (ex GST %)'} value={cur.rate} onChange={v=>onChange({...rates,[f]:{...cur,rate:v}})} placeholder="0.00" suffix="%" warning={rateWarning}/>
+        <Field label={label+' (ex GST %)'} value={cur.rate} onChange={v=>onChange({...rates,[f]:{...cur,rate:v}})} placeholder="0.00" suffix="%" warning={rateWarning}/>
         <Field label="Fixed Fee (optional)" value={cur.fee} onChange={v=>onChange({...rates,[f]:{...cur,fee:v}})} placeholder="None" suffix="$" warning={feeWarning}/>
       </div>);
     })}
@@ -171,11 +174,15 @@ function PreviewCard({brand,merchant,existing,options,customerLogo,repName,amexD
       <span style={{fontSize:9,fontWeight:700,color:muted?'#999':b.primary,textAlign:'right',flex:'1 1 auto',minWidth:0,wordBreak:'break-word',overflowWrap:'anywhere'}}>{value}</span>
     </div>
   );
-  const renderRateSet = (rateTypeId,rates,muted)=>{
+  const renderRateSet = (rateTypeId,rates,muted,isExisting)=>{
     const type=rateTypeObj(rateTypeId);if(!type)return null;
-    return type.fields.filter(f=>!(f==='amex'&&amexDirect)).map(f=>{
+    // AMEX Direct only hides/relabels the AMEX row for the NEW offer — the
+    // existing contract keeps showing its real current AMEX rate untouched.
+    const hideAmex = amexDirect && !isExisting;
+    return type.fields.filter(f=>!(f==='amex'&&hideAmex)).map(f=>{
       const cur=rates?.[f]||{};
-      return <RowItem key={f} label={rateLabel(f,amexDirect)} value={fmtRateFee(cur.rate,cur.fee)} muted={muted}/>;
+      const label = (f==='amex'&&isExisting) ? RATE_LABELS.amex : rateLabel(f,amexDirect);
+      return <RowItem key={f} label={label} value={fmtRateFee(cur.rate,cur.fee)} muted={muted}/>;
     });
   };
   const renderSubsidy = (opt,muted)=>{
@@ -227,8 +234,8 @@ function PreviewCard({brand,merchant,existing,options,customerLogo,repName,amexD
       <div style={{padding:'12px 28px 10px',display:'grid',gridTemplateColumns:optCount===1?'1fr 1fr':`130px repeat(${optCount}, 1fr)`,gap:14}}>
         <div style={{opacity:0.5,minWidth:0}}>
           <div style={{fontSize:9,fontWeight:800,color:'#999',textTransform:'uppercase',letterSpacing:1,paddingBottom:4,borderBottom:'1.5px solid #ddd',marginBottom:2}}>Current</div>
-          <SectionLabel muted>In-Store Rates</SectionLabel>{renderRateSet(existing.rateType,existing.rates,true)}
-          {existing.hasEcom&&<><SectionLabel muted>E-Commerce Rates</SectionLabel>{renderRateSet(existing.ecomRateType,existing.ecomRates,true)}</>}
+          <SectionLabel muted>In-Store Rates</SectionLabel>{renderRateSet(existing.rateType,existing.rates,true,true)}
+          {existing.hasEcom&&<><SectionLabel muted>E-Commerce Rates</SectionLabel>{renderRateSet(existing.ecomRateType,existing.ecomRates,true,true)}</>}
           <SectionLabel muted>Pricing</SectionLabel>{renderSubsidy(existing,true)}
         </div>
         {options.map((opt,i)=>(
@@ -315,12 +322,13 @@ export default function ProposalTool(){
   },[]);
 
   // Clearing on toggle-on: a rep flipping this after already entering an AMEX
-  // rate shouldn't leave a stale, now-meaningless value sitting in a disabled field.
+  // rate on a NEW offer shouldn't leave a stale, now-meaningless value sitting
+  // in a disabled field. The existing contract is untouched — AMEX Direct only
+  // describes the new offer's terms, not the merchant's current real contract.
   const handleAmexDirectChange=useCallback((checked)=>{
     setAmexDirect(checked);
     if(checked){
       const clearAmex=(rates)=>({...rates,amex:{rate:'',fee:''}});
-      setExisting(prev=>({...prev,rates:clearAmex(prev.rates),ecomRates:clearAmex(prev.ecomRates)}));
       setOptions(prev=>prev.map(o=>({...o,rates:clearAmex(o.rates),ecomRates:clearAmex(o.ecomRates)})));
     }
   },[]);
