@@ -172,16 +172,13 @@ function PreviewCard({brand,merchant,existing,options,customerLogo,repName,amexD
         <img src={TERMINAL_IMG} alt="" style={{float:'right',width:100,objectFit:'contain',marginLeft:14,marginTop:-4}}/>
         <div style={{fontSize:8,color:b.primary,fontWeight:600,letterSpacing:0.3,opacity:0.6,marginBottom:4}}>All rates and fees shown are exclusive of GST.</div>
         {amexDirect&&(
-          <div style={{display:'flex',alignItems:'flex-start',gap:8,marginBottom:4}}>
-            {amexQrDataUrl&&(
-              <div style={{textAlign:'center',flexShrink:0}}>
-                <img src={amexQrDataUrl} alt="Scan to apply for an AMEX Merchant Account" style={{width:44,height:44,display:'block',border:'1px solid #eee',borderRadius:3}}/>
-                <div style={{fontSize:6,color:'#bbb',marginTop:2,whiteSpace:'nowrap'}}>Scan to apply</div>
-              </div>
-            )}
-            <div style={{fontSize:8,color:'#aaa',lineHeight:1.5}}>
-              <strong style={{color:b.primary,opacity:0.8}}>AMEX Merchant Facility:</strong> This proposal assumes the Merchant will obtain their own American Express Merchant Account. Upon approval, the account will be configured for acceptance via the supplied Oolio payment terminals. <a id="amex-apply-link" href={AMEX_APPLY_URL} style={{color:b.primary}}>Apply here</a>.
+          <div style={{display:'flex',alignItems:'center',gap:6,marginBottom:4}}>
+            <div style={{fontSize:8,color:'#aaa',lineHeight:1.5,flex:1}}>
+              <strong style={{color:b.primary,opacity:0.8}}>AMEX Merchant Facility:</strong> This proposal assumes the Merchant will obtain their own American Express Merchant Account. Upon approval, the account will be configured for acceptance via the supplied Oolio payment terminals. Scan to apply:
             </div>
+            {amexQrDataUrl&&(
+              <img id="amex-qr-img" src={amexQrDataUrl} alt="Scan to apply for an AMEX Merchant Account" style={{width:24,height:24,flexShrink:0,border:'1px solid #eee',borderRadius:2}}/>
+            )}
           </div>
         )}
         <div style={{fontSize:8,color:'#aaa',lineHeight:1.5}}>
@@ -252,18 +249,18 @@ export default function ProposalTool(){
         const pdfW=pxW*0.264583/sc,pdfH=pxH*0.264583/sc;
         const doc=new jsPDF({orientation:pdfW>pdfH?'l':'p',unit:'mm',format:[pdfW,pdfH]});
         doc.addImage(dataUrl,'PNG',0,0,pdfW,pdfH);
-        // Overlay a real clickable link on top of the flattened "Apply here" text —
+        // Overlay a real clickable link on top of the flattened QR code image —
         // a PNG/copy-image is just pixels and can never carry a link, but the PDF can.
-        const applyLink=document.getElementById('amex-apply-link');
-        if(applyLink){
+        const qrImg=document.getElementById('amex-qr-img');
+        if(qrImg){
           const pxToMm=0.264583;
           const containerRect=el.getBoundingClientRect();
-          const linkRect=applyLink.getBoundingClientRect();
+          const qrRect=qrImg.getBoundingClientRect();
           doc.link(
-            (linkRect.left-containerRect.left)*pxToMm,
-            (linkRect.top-containerRect.top)*pxToMm,
-            linkRect.width*pxToMm,
-            linkRect.height*pxToMm,
+            (qrRect.left-containerRect.left)*pxToMm,
+            (qrRect.top-containerRect.top)*pxToMm,
+            qrRect.width*pxToMm,
+            qrRect.height*pxToMm,
             {url:AMEX_APPLY_URL}
           );
         }
