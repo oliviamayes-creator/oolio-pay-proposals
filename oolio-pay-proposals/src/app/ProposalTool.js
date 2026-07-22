@@ -63,6 +63,15 @@ const EXPIRY_OPTIONS = [
 const addDays = (days) => { const d=new Date(); d.setDate(d.getDate()+Number(days)); return d.toLocaleDateString('en-AU',{day:'numeric',month:'long',year:'numeric'}); };
 const DRAFT_KEY = 'oolio_proposal_draft';
 const BANNER_DISMISS_KEY = 'oolio_banner_dismissed';
+const TERMINAL_MONTHLY_COST = 28;
+const CONTRACT_TERMS = [
+  { id:'', label:'— Not set —' },
+  { id:'month_to_month', label:'Month to Month' },
+  { id:'12', label:'12 Months' },
+  { id:'24', label:'24 Months' },
+  { id:'36', label:'36 Months' },
+];
+const fmtMoney = (n) => Number.isInteger(n) ? `$${n}` : `$${n.toFixed(2)}`;
 // Unicode-safe base64 helpers for encoding form state into the shareable URL.
 const b64Encode = (str) => btoa(unescape(encodeURIComponent(str)));
 const b64Decode = (str) => decodeURIComponent(escape(atob(str)));
@@ -73,11 +82,13 @@ const labelSt = { fontSize:11,fontWeight:600,color:'#555',marginBottom:3,display
 
 const warnSt = { fontSize:10,color:'#e67e00',marginTop:3,lineHeight:1.3 };
 
-function Field({label,value,onChange,placeholder,suffix,warning}){
-  return(<div style={{marginBottom:8}}><label style={labelSt}>{label}</label><div style={{position:'relative'}}>
-    <input type="text" value={value} onChange={e=>onChange(e.target.value)} placeholder={placeholder} style={inputSt}/>
+const noteSt = { fontSize:10,color:'#888',marginTop:3,lineHeight:1.3,fontStyle:'italic' };
+
+function Field({label,value,onChange,placeholder,suffix,warning,note,disabled}){
+  return(<div style={{marginBottom:8,opacity:disabled?0.55:1}}><label style={labelSt}>{label}</label><div style={{position:'relative'}}>
+    <input type="text" value={value} onChange={e=>onChange(e.target.value)} placeholder={placeholder} disabled={disabled} style={{...inputSt,background:disabled?'#f5f5f5':'#fff',pointerEvents:disabled?'none':'auto',cursor:disabled?'not-allowed':'text'}}/>
     {suffix&&<span style={{position:'absolute',right:10,top:'50%',transform:'translateY(-50%)',fontSize:12,color:'#999'}}>{suffix}</span>}
-  </div>{warning&&<div style={warnSt}>{warning}</div>}</div>);
+  </div>{warning&&<div style={warnSt}>{warning}</div>}{note&&<div style={noteSt}>{note}</div>}</div>);
 }
 function TextAreaField({label,value,onChange,placeholder}){
   return(<div style={{marginBottom:8}}><label style={labelSt}>{label}</label>
@@ -101,6 +112,13 @@ function RateFields({rateType,rates,onChange,amexDirect,existingRates,isExisting
   return(<div>
     {type.fields.map(f=>{
       const cur = rates[f]||{rate:'',fee:''};
+      const isLockedAmex = f==='amex' && amexDirect;
+      if(isLockedAmex){
+        return(<div key={f} style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:'0 12px'}}>
+          <Field label={rateLabel(f,amexDirect)+' (ex GST %)'} value="" onChange={()=>{}} placeholder="Merchant direct" suffix="%" disabled/>
+          <Field label="Fixed Fee (optional)" value="" onChange={()=>{}} placeholder="N/A" suffix="$" disabled note="AMEX rate removed — merchant will set up their own account"/>
+        </div>);
+      }
       const rateNum = parseFloat(cur.rate);
       const feeNum = parseFloat(cur.fee);
       let rateWarning=null;
@@ -118,8 +136,16 @@ function RateFields({rateType,rates,onChange,amexDirect,existingRates,isExisting
     })}
   </div>);
 }
-function SubsidyFields({data,onChange}){
+function SubsidyFields({data,onChange,brandColor}){
   const set=(k,v)=>onChange({...data,[k]:v});
+  const count=parseFloat(data.terminalCount);
+  const discPct=parseFloat(data.terminalDiscount)||0;
+  let terminalCalc=null;
+  if(!isNaN(count)&&count>0){
+    const full=count*TERMINAL_MONTHLY_COST;
+    const owed=full-full*(discPct/100);
+    terminalCalc=`${count} terminal${count===1?'':'s'} × $${TERMINAL_MONTHLY_COST} = ${fmtMoney(full)}/month${discPct?` · ${discPct}% off`:''} · You cover: ${fmtMoney(owed)}/month`;
+  }
   return(<div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:'0 12px'}}>
     <Field label="SaaS Discount %" value={data.saasDiscount} onChange={v=>set('saasDiscount',v)} placeholder="0" suffix="%"/>
     <Field label="SaaS Amount ($)" value={data.saasAmount} onChange={v=>set('saasAmount',v)} placeholder="0.00" suffix="$"/>
@@ -127,11 +153,12 @@ function SubsidyFields({data,onChange}){
     <Field label="Advantage+ Amount ($)" value={data.advantageAmount} onChange={v=>set('advantageAmount',v)} placeholder="0.00" suffix="$"/>
     <Field label="No. of Terminals" value={data.terminalCount} onChange={v=>set('terminalCount',v)} placeholder="0"/>
     <Field label="Terminal Subsidy %" value={data.terminalDiscount} onChange={v=>set('terminalDiscount',v)} placeholder="0" suffix="%"/>
+    {terminalCalc&&<div style={{gridColumn:'1 / -1',fontSize:11,fontStyle:'italic',color:brandColor||'#673AB6',marginTop:-4,marginBottom:8}}>{terminalCalc}</div>}
   </div>);
 }
 
 // ─── Preview Card ────────────────────────────────────────────────────────────
-function PreviewCard({brand,merchant,existing,options,customerLogo,repName,amexDirect,amexQrDataUrl,expiryDays,customNote,markAsDraft,venueNotes}){
+function PreviewCard({brand,merchant,existing,options,customerLogo,repName,amexDirect,amexQrDataUrl,expiryDays,customNote,markAsDraft,venueNotes,contractTerm}){
   const b = BRANDS[brand];
   const optCount = options.length;
   const rateTypeObj = id => RATE_TYPES.find(t=>t.id===id);
@@ -146,7 +173,7 @@ function PreviewCard({brand,merchant,existing,options,customerLogo,repName,amexD
   );
   const renderRateSet = (rateTypeId,rates,muted)=>{
     const type=rateTypeObj(rateTypeId);if(!type)return null;
-    return type.fields.map(f=>{
+    return type.fields.filter(f=>!(f==='amex'&&amexDirect)).map(f=>{
       const cur=rates?.[f]||{};
       return <RowItem key={f} label={rateLabel(f,amexDirect)} value={fmtRateFee(cur.rate,cur.fee)} muted={muted}/>;
     });
@@ -155,7 +182,13 @@ function PreviewCard({brand,merchant,existing,options,customerLogo,repName,amexD
     const items=[];
     if(opt.saasDiscount||opt.saasAmount){const p=[];if(opt.saasDiscount)p.push(fmtPct(opt.saasDiscount)+' off');if(opt.saasAmount)p.push(fmtDollar(opt.saasAmount));items.push(<RowItem key="saas" label="SaaS" value={p.join(' · ')} muted={muted}/>);}
     if(opt.advantageDiscount||opt.advantageAmount){const p=[];if(opt.advantageDiscount)p.push(fmtPct(opt.advantageDiscount)+' off');if(opt.advantageAmount)p.push(fmtDollar(opt.advantageAmount));items.push(<RowItem key="adv" label="Advantage+" value={p.join(' · ')} muted={muted}/>);}
-    if(opt.terminalCount){const p=[];if(opt.terminalDiscount)p.push(fmtPct(opt.terminalDiscount)+' off');items.push(<RowItem key="term" label={`EFTPOS Terminal ×${opt.terminalCount}`} value={p.length?p.join(' · '):'—'} muted={muted}/>);}
+    const count=parseFloat(opt.terminalCount);
+    if(!isNaN(count)&&count>0){
+      const discPct=parseFloat(opt.terminalDiscount)||0;
+      const full=count*TERMINAL_MONTHLY_COST;
+      const owed=full-full*(discPct/100);
+      items.push(<RowItem key="term" label={`EFTPOS Terminal ×${count}`} value={`${fmtMoney(owed)}/mo ex GST covered${discPct?` (${discPct}% off RRP)`:''}`} muted={muted}/>);
+    }
     return items;
   };
   const SectionLabel = ({children,muted})=>(<div style={{fontSize:8,fontWeight:700,color:muted?'#bbb':b.primary,textTransform:'uppercase',letterSpacing:1.2,marginTop:8,marginBottom:2,opacity:muted?0.7:0.5}}>{children}</div>);
@@ -212,6 +245,9 @@ function PreviewCard({brand,merchant,existing,options,customerLogo,repName,amexD
       <div style={{background:'#f7f7f8',padding:'10px 28px 16px',borderTop:'1px solid #eee'}}>
         <img src={TERMINAL_IMG} alt="" style={{float:'right',width:100,objectFit:'contain',marginLeft:14,marginTop:-4}}/>
         <div style={{fontSize:8,color:b.primary,fontWeight:600,letterSpacing:0.3,opacity:0.6,marginBottom:4}}>All rates and fees shown are exclusive of GST.</div>
+        {contractTerm&&(
+          <div style={{fontSize:8,color:b.primary,opacity:0.7,marginBottom:4}}>Contract Term: {CONTRACT_TERMS.find(t=>t.id===contractTerm)?.label}</div>
+        )}
         {amexDirect&&(
           <div style={{display:'flex',alignItems:'center',gap:6,marginBottom:4}}>
             <div style={{fontSize:8,color:'#aaa',lineHeight:1.5,flex:1}}>
@@ -245,6 +281,7 @@ export default function ProposalTool(){
   const [customNote,setCustomNote]=useState('');
   const [markAsDraft,setMarkAsDraft]=useState(false);
   const [venueNotes,setVenueNotes]=useState('');
+  const [contractTerm,setContractTerm]=useState('');
   const [draftSavedVisible,setDraftSavedVisible]=useState(false);
   const [linkCopied,setLinkCopied]=useState(false);
   const [bannerDismissed,setBannerDismissed]=useState(false);
@@ -258,8 +295,8 @@ export default function ProposalTool(){
 
   const collectState=useCallback(()=>({
     brand,merchant,existing,options,repName,amexDirect,
-    expiryDays,customNote,markAsDraft,venueNotes,
-  }),[brand,merchant,existing,options,repName,amexDirect,expiryDays,customNote,markAsDraft,venueNotes]);
+    expiryDays,customNote,markAsDraft,venueNotes,contractTerm,
+  }),[brand,merchant,existing,options,repName,amexDirect,expiryDays,customNote,markAsDraft,venueNotes,contractTerm]);
 
   const applyState=useCallback((s)=>{
     if(!s)return;
@@ -273,7 +310,19 @@ export default function ProposalTool(){
     if(typeof s.customNote==='string')setCustomNote(s.customNote);
     if(typeof s.markAsDraft==='boolean')setMarkAsDraft(s.markAsDraft);
     if(typeof s.venueNotes==='string')setVenueNotes(s.venueNotes);
+    if(typeof s.contractTerm==='string')setContractTerm(s.contractTerm);
     if(typeof s.customerLogo==='string'||s.customerLogo===null)setCustomerLogo(s.customerLogo??null);
+  },[]);
+
+  // Clearing on toggle-on: a rep flipping this after already entering an AMEX
+  // rate shouldn't leave a stale, now-meaningless value sitting in a disabled field.
+  const handleAmexDirectChange=useCallback((checked)=>{
+    setAmexDirect(checked);
+    if(checked){
+      const clearAmex=(rates)=>({...rates,amex:{rate:'',fee:''}});
+      setExisting(prev=>({...prev,rates:clearAmex(prev.rates),ecomRates:clearAmex(prev.ecomRates)}));
+      setOptions(prev=>prev.map(o=>({...o,rates:clearAmex(o.rates),ecomRates:clearAmex(o.ecomRates)})));
+    }
   },[]);
 
   const handleLogoUpload=e=>{const file=e.target.files[0];if(!file)return;const reader=new FileReader();reader.onload=ev=>setCustomerLogo(ev.target.result);reader.readAsDataURL(file);};
@@ -382,7 +431,7 @@ export default function ProposalTool(){
     }catch(err){console.error('Failed to clear draft:',err);}
     setBrand('oolio');setMerchant({name:'',ttv:''});setCustomerLogo(null);
     setExisting(emptyExisting());setOptions([emptyOption()]);setRepName('');
-    setAmexDirect(false);setExpiryDays('14');setCustomNote('');setMarkAsDraft(false);setVenueNotes('');
+    setAmexDirect(false);setExpiryDays('14');setCustomNote('');setMarkAsDraft(false);setVenueNotes('');setContractTerm('');
   },[]);
 
   const dismissBanner=useCallback(()=>{
@@ -465,6 +514,7 @@ export default function ProposalTool(){
             <Field label="Venues (optional)" value={venueNotes} onChange={setVenueNotes} placeholder="e.g. 3 venues — Sydney CBD, Parramatta, Bondi"/>
             <Field label="Prepared By" value={repName} onChange={setRepName} placeholder="e.g. Olivia Mayes"/>
             <Select label="Proposal Valid For" value={expiryDays} onChange={setExpiryDays} options={EXPIRY_OPTIONS}/>
+            <Select label="Contract Term" value={contractTerm} onChange={setContractTerm} options={CONTRACT_TERMS}/>
             <TextAreaField label="Personal Note (optional)" value={customNote} onChange={setCustomNote} placeholder="e.g. Great speaking with you today, Sarah — as discussed..."/>
             <div style={{marginBottom:8}}><label style={labelSt}>Customer Logo (optional)</label>
               <input type="file" accept="image/*" onChange={handleLogoUpload} style={{fontSize:12}}/>
@@ -476,7 +526,7 @@ export default function ProposalTool(){
 
           <div style={{background:'#fff',borderRadius:12,padding:18,marginBottom:16,boxShadow:'0 1px 6px rgba(0,0,0,0.06)'}}>
             <div style={sectionTitle(b)}>Proposal Options</div>
-            <Checkbox label="AMEX Direct (merchant sets up own account)" checked={amexDirect} onChange={setAmexDirect}/>
+            <Checkbox label="AMEX Direct (merchant sets up own account)" checked={amexDirect} onChange={handleAmexDirectChange}/>
           </div>
 
           <div style={{background:'#fff',borderRadius:12,padding:18,marginBottom:16,boxShadow:'0 1px 6px rgba(0,0,0,0.06)'}}>
@@ -488,7 +538,7 @@ export default function ProposalTool(){
               <Select label="E-Commerce Rate Type" value={existing.ecomRateType} onChange={v=>setExisting({...existing,ecomRateType:v})} options={RATE_TYPES}/>
               <RateFields rateType={existing.ecomRateType} rates={existing.ecomRates} onChange={r=>setExisting({...existing,ecomRates:r})} amexDirect={amexDirect} isExisting/>
             </>)}
-            <div style={{marginTop:8}}><SubsidyFields data={existing} onChange={setExisting}/></div>
+            <div style={{marginTop:8}}><SubsidyFields data={existing} onChange={setExisting} brandColor={b.primary}/></div>
           </div>
 
           {options.map((opt,i)=>(
@@ -504,7 +554,7 @@ export default function ProposalTool(){
                 <Select label="E-Commerce Rate Type" value={opt.ecomRateType} onChange={v=>updateOption(i,{...opt,ecomRateType:v})} options={RATE_TYPES}/>
                 <RateFields rateType={opt.ecomRateType} rates={opt.ecomRates} onChange={r=>updateOption(i,{...opt,ecomRates:r})} amexDirect={amexDirect} existingRates={existing.ecomRates}/>
               </>)}
-              <div style={{marginTop:8}}><SubsidyFields data={opt} onChange={d=>updateOption(i,d)}/></div>
+              <div style={{marginTop:8}}><SubsidyFields data={opt} onChange={d=>updateOption(i,d)} brandColor={b.primary}/></div>
             </div>
           ))}
           {options.length<3&&(
@@ -545,7 +595,7 @@ export default function ProposalTool(){
             </div>
           )}
           <div style={{display:'inline-block'}} ref={outputRef}>
-            <PreviewCard brand={brand} merchant={merchant} existing={existing} options={options} customerLogo={customerLogo} repName={repName} amexDirect={amexDirect} amexQrDataUrl={amexQrDataUrl} expiryDays={expiryDays} customNote={customNote} markAsDraft={markAsDraft} venueNotes={venueNotes}/>
+            <PreviewCard brand={brand} merchant={merchant} existing={existing} options={options} customerLogo={customerLogo} repName={repName} amexDirect={amexDirect} amexQrDataUrl={amexQrDataUrl} expiryDays={expiryDays} customNote={customNote} markAsDraft={markAsDraft} venueNotes={venueNotes} contractTerm={contractTerm}/>
           </div>
           {renderedPng&&(
             <div style={{marginTop:16}}>
