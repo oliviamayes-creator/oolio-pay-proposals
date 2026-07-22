@@ -24,25 +24,34 @@ const OolioPayLogo = ({ size = 28, fill = '#fff' }) => (
 );
 
 // ─── Rate types ──────────────────────────────────────────────────────────────
+// Each field below carries its own rate % AND its own optional fixed fee per
+// transaction, so a blended rate can have a fee while e.g. AMEX/International
+// are flat with no fee (see RateFields).
 const RATE_TYPES = [
   { id: 'blended', label: 'Blended', fields: ['blended'] },
-  { id: 'blended_fixed', label: 'Blended Rate + Fixed Fee', fields: ['blended','fixedFee'] },
   { id: 'blended_amex', label: 'Blended & AMEX', fields: ['blended','amex'] },
   { id: 'blended_amex_intl', label: 'Blended & AMEX & International', fields: ['blended','amex','international'] },
-  { id: 'blended_amex_intl_fixed', label: 'Blended & AMEX & Intl + Fixed Fee', fields: ['blended','amex','international','fixedFee'] },
   { id: 'debit_credit', label: 'Debit & Credit', fields: ['debit','credit'] },
-  { id: 'debit_credit_fixed', label: 'Debit & Credit + Fixed Fee', fields: ['debit','credit','fixedFee'] },
   { id: 'debit_credit_amex_intl', label: 'Debit & Credit & AMEX & Intl', fields: ['debit','credit','amex','international'] },
-  { id: 'debit_credit_amex_intl_fixed', label: 'Debit & Credit & AMEX & Intl + Fixed', fields: ['debit','credit','amex','international','fixedFee'] },
 ];
-const RATE_LABELS = { blended:'Blended MSF Rate', debit:'Debit Rate', credit:'Credit Rate', amex:'AMEX Rate', international:'International Rate', fixedFee:'Fixed Fee per Txn' };
+const RATE_LABELS = { blended:'Blended MSF Rate', debit:'Debit Rate', credit:'Credit Rate', amex:'AMEX Rate', international:'International Rate' };
+const RATE_FIELD_KEYS = ['blended','debit','credit','amex','international'];
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 const fmt = v => { const n = parseFloat(v); return isNaN(n) ? '—' : n.toFixed(2)+'%'; };
 const fmtDollar = v => { const n = parseFloat(v); return isNaN(n) ? '—' : '$'+n.toLocaleString('en-AU',{minimumFractionDigits:2,maximumFractionDigits:2}); };
 const fmtPct = v => { const n = parseFloat(v); return isNaN(n) ? '—' : n.toFixed(0)+'%'; };
-const emptyRates = () => ({ blended:'',debit:'',credit:'',amex:'',international:'',fixedFee:'' });
-const emptyOption = () => ({ rateType:'blended_amex_intl', rates:emptyRates(), saasDiscount:'',saasAmount:'',advantageDiscount:'',advantageAmount:'',terminalCount:'',terminalDiscount:'' });
+const fmtRateFee = (rate,fee) => {
+  const r = fmt(rate);
+  const feeNum = parseFloat(fee);
+  return isNaN(feeNum) ? r : `${r} + ${fmtDollar(fee)}`;
+};
+const emptyRates = () => Object.fromEntries(RATE_FIELD_KEYS.map(k=>[k,{rate:'',fee:''}]));
+const emptyOption = () => ({
+  rateType:'blended_amex_intl', rates:emptyRates(),
+  hasEcom:false, ecomRateType:'blended', ecomRates:emptyRates(),
+  saasDiscount:'',saasAmount:'',advantageDiscount:'',advantageAmount:'',terminalCount:'',terminalDiscount:''
+});
 const emptyExisting = () => ({ ...emptyOption() });
 
 // ─── Small components ────────────────────────────────────────────────────────
@@ -61,10 +70,22 @@ function Select({label,value,onChange,options}){
       {options.map(o=><option key={o.id} value={o.id}>{o.label}</option>)}
     </select></div>);
 }
+function Checkbox({label,checked,onChange}){
+  return(<label style={{display:'flex',alignItems:'center',gap:6,fontSize:12,fontWeight:600,color:'#555',margin:'12px 0 8px',cursor:'pointer'}}>
+    <input type="checkbox" checked={!!checked} onChange={e=>onChange(e.target.checked)}/>
+    {label}
+  </label>);
+}
 function RateFields({rateType,rates,onChange}){
   const type = RATE_TYPES.find(t=>t.id===rateType); if(!type) return null;
-  return(<div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:'0 12px'}}>
-    {type.fields.map(f=><Field key={f} label={RATE_LABELS[f]+' (ex GST %)'} value={rates[f]||''} onChange={v=>onChange({...rates,[f]:v})} placeholder="0.00" suffix="%"/>)}
+  return(<div>
+    {type.fields.map(f=>{
+      const cur = rates[f]||{rate:'',fee:''};
+      return(<div key={f} style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:'0 12px'}}>
+        <Field label={RATE_LABELS[f]+' (ex GST %)'} value={cur.rate} onChange={v=>onChange({...rates,[f]:{...cur,rate:v}})} placeholder="0.00" suffix="%"/>
+        <Field label="Fixed Fee (optional)" value={cur.fee} onChange={v=>onChange({...rates,[f]:{...cur,fee:v}})} placeholder="None" suffix="$"/>
+      </div>);
+    })}
   </div>);
 }
 function SubsidyFields({data,onChange}){
@@ -89,10 +110,16 @@ function PreviewCard({brand,merchant,existing,options,customerLogo,repName}){
   const RowItem = ({label,value,muted})=>(
     <div style={{display:'flex',justifyContent:'space-between',alignItems:'baseline',padding:'3px 0',borderBottom:`1px solid ${muted?'#eee':b.primary+'15'}`,gap:8}}>
       <span style={{fontSize:9,color:muted?'#aaa':'#555',whiteSpace:'nowrap',flexShrink:0}}>{label}</span>
-      <span style={{fontSize:10,fontWeight:700,color:muted?'#999':b.primary,textAlign:'right',whiteSpace:'nowrap'}}>{value}</span>
+      <span style={{fontSize:10,fontWeight:700,color:muted?'#999':b.primary,textAlign:'right',flex:'1 1 auto',minWidth:0,wordBreak:'break-word'}}>{value}</span>
     </div>
   );
-  const renderRates = (opt,muted)=>{const type=rateTypeObj(opt.rateType);if(!type)return null;return type.fields.map(f=><RowItem key={f} label={RATE_LABELS[f]} value={f==='fixedFee'?fmtDollar(opt.rates[f]):fmt(opt.rates[f])} muted={muted}/>);};
+  const renderRateSet = (rateTypeId,rates,muted)=>{
+    const type=rateTypeObj(rateTypeId);if(!type)return null;
+    return type.fields.map(f=>{
+      const cur=rates?.[f]||{};
+      return <RowItem key={f} label={RATE_LABELS[f]} value={fmtRateFee(cur.rate,cur.fee)} muted={muted}/>;
+    });
+  };
   const renderSubsidy = (opt,muted)=>{
     const items=[];
     if(opt.saasDiscount||opt.saasAmount){const p=[];if(opt.saasDiscount)p.push(fmtPct(opt.saasDiscount)+' off');if(opt.saasAmount)p.push(fmtDollar(opt.saasAmount));items.push(<RowItem key="saas" label="SaaS" value={p.join(' · ')} muted={muted}/>);}
@@ -124,13 +151,15 @@ function PreviewCard({brand,merchant,existing,options,customerLogo,repName}){
       <div style={{padding:'12px 28px 10px',display:'grid',gridTemplateColumns:`130px repeat(${optCount}, 1fr)`,gap:14}}>
         <div style={{opacity:0.5,minWidth:0}}>
           <div style={{fontSize:9,fontWeight:800,color:'#999',textTransform:'uppercase',letterSpacing:1,paddingBottom:4,borderBottom:'1.5px solid #ddd',marginBottom:2}}>Current</div>
-          <SectionLabel muted>Rates</SectionLabel>{renderRates(existing,true)}
+          <SectionLabel muted>In-Store Rates</SectionLabel>{renderRateSet(existing.rateType,existing.rates,true)}
+          {existing.hasEcom&&<><SectionLabel muted>E-Commerce Rates</SectionLabel>{renderRateSet(existing.ecomRateType,existing.ecomRates,true)}</>}
           <SectionLabel muted>Pricing</SectionLabel>{renderSubsidy(existing,true)}
         </div>
         {options.map((opt,i)=>(
           <div key={i} style={{borderLeft:`2.5px solid ${b.primary}`,paddingLeft:12,minWidth:0}}>
             <div style={{fontSize:10,fontWeight:800,color:b.primary,textTransform:'uppercase',letterSpacing:1,paddingBottom:4,borderBottom:`1.5px solid ${b.primary}25`,marginBottom:2}}>{optCount===1?'New Offer':`Option ${i+1}`}</div>
-            <SectionLabel>Rates</SectionLabel>{renderRates(opt,false)}
+            <SectionLabel>In-Store Rates</SectionLabel>{renderRateSet(opt.rateType,opt.rates,false)}
+            {opt.hasEcom&&<><SectionLabel>E-Commerce Rates</SectionLabel>{renderRateSet(opt.ecomRateType,opt.ecomRates,false)}</>}
             <SectionLabel>Pricing</SectionLabel>{renderSubsidy(opt,false)}
           </div>
         ))}
@@ -226,8 +255,13 @@ export default function ProposalTool(){
 
           <div style={{background:'#fff',borderRadius:12,padding:18,marginBottom:16,boxShadow:'0 1px 6px rgba(0,0,0,0.06)'}}>
             <div style={sectionTitle(b)}>Existing Contract</div>
-            <Select label="Rate Type" value={existing.rateType} onChange={v=>setExisting({...existing,rateType:v})} options={RATE_TYPES}/>
+            <Select label="In-Store Rate Type" value={existing.rateType} onChange={v=>setExisting({...existing,rateType:v})} options={RATE_TYPES}/>
             <RateFields rateType={existing.rateType} rates={existing.rates} onChange={r=>setExisting({...existing,rates:r})}/>
+            <Checkbox label="Add E-Commerce Rates" checked={existing.hasEcom} onChange={v=>setExisting({...existing,hasEcom:v})}/>
+            {existing.hasEcom&&(<>
+              <Select label="E-Commerce Rate Type" value={existing.ecomRateType} onChange={v=>setExisting({...existing,ecomRateType:v})} options={RATE_TYPES}/>
+              <RateFields rateType={existing.ecomRateType} rates={existing.ecomRates} onChange={r=>setExisting({...existing,ecomRates:r})}/>
+            </>)}
             <div style={{marginTop:8}}><SubsidyFields data={existing} onChange={setExisting}/></div>
           </div>
 
@@ -237,8 +271,13 @@ export default function ProposalTool(){
                 <span>{options.length===1?'New Offer':`New Option ${i+1}`}</span>
                 {options.length>1&&<button onClick={()=>removeOption(i)} style={{fontSize:11,color:'#c00',background:'none',border:'none',cursor:'pointer'}}>Remove</button>}
               </div>
-              <Select label="Rate Type" value={opt.rateType} onChange={v=>updateOption(i,{...opt,rateType:v})} options={RATE_TYPES}/>
+              <Select label="In-Store Rate Type" value={opt.rateType} onChange={v=>updateOption(i,{...opt,rateType:v})} options={RATE_TYPES}/>
               <RateFields rateType={opt.rateType} rates={opt.rates} onChange={r=>updateOption(i,{...opt,rates:r})}/>
+              <Checkbox label="Add E-Commerce Rates" checked={opt.hasEcom} onChange={v=>updateOption(i,{...opt,hasEcom:v})}/>
+              {opt.hasEcom&&(<>
+                <Select label="E-Commerce Rate Type" value={opt.ecomRateType} onChange={v=>updateOption(i,{...opt,ecomRateType:v})} options={RATE_TYPES}/>
+                <RateFields rateType={opt.ecomRateType} rates={opt.ecomRates} onChange={r=>updateOption(i,{...opt,ecomRates:r})}/>
+              </>)}
               <div style={{marginTop:8}}><SubsidyFields data={opt} onChange={d=>updateOption(i,d)}/></div>
             </div>
           ))}
