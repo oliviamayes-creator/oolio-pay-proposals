@@ -55,16 +55,34 @@ const emptyOption = () => ({
   saasDiscount:'',saasAmount:'',advantageDiscount:'',advantageAmount:'',terminalCount:'',terminalDiscount:''
 });
 const emptyExisting = () => ({ ...emptyOption() });
+const EXPIRY_OPTIONS = [
+  { id:'7', label:'7 days' },
+  { id:'14', label:'14 days' },
+  { id:'30', label:'30 days' },
+];
+const addDays = (days) => { const d=new Date(); d.setDate(d.getDate()+Number(days)); return d.toLocaleDateString('en-AU',{day:'numeric',month:'long',year:'numeric'}); };
+const DRAFT_KEY = 'oolio_proposal_draft';
+const BANNER_DISMISS_KEY = 'oolio_banner_dismissed';
+// Unicode-safe base64 helpers for encoding form state into the shareable URL.
+const b64Encode = (str) => btoa(unescape(encodeURIComponent(str)));
+const b64Decode = (str) => decodeURIComponent(escape(atob(str)));
 
 // ─── Small components ────────────────────────────────────────────────────────
 const inputSt = { width:'100%',padding:'8px 10px',border:'1px solid #d0d0d0',borderRadius:6,fontSize:13,outline:'none',boxSizing:'border-box',fontFamily:'inherit' };
 const labelSt = { fontSize:11,fontWeight:600,color:'#555',marginBottom:3,display:'block' };
 
-function Field({label,value,onChange,placeholder,suffix}){
+const warnSt = { fontSize:10,color:'#e67e00',marginTop:3,lineHeight:1.3 };
+
+function Field({label,value,onChange,placeholder,suffix,warning}){
   return(<div style={{marginBottom:8}}><label style={labelSt}>{label}</label><div style={{position:'relative'}}>
     <input type="text" value={value} onChange={e=>onChange(e.target.value)} placeholder={placeholder} style={inputSt}/>
     {suffix&&<span style={{position:'absolute',right:10,top:'50%',transform:'translateY(-50%)',fontSize:12,color:'#999'}}>{suffix}</span>}
-  </div></div>);
+  </div>{warning&&<div style={warnSt}>{warning}</div>}</div>);
+}
+function TextAreaField({label,value,onChange,placeholder}){
+  return(<div style={{marginBottom:8}}><label style={labelSt}>{label}</label>
+    <textarea value={value} onChange={e=>onChange(e.target.value)} placeholder={placeholder} rows={3} style={{...inputSt,resize:'vertical',fontFamily:'inherit'}}/>
+  </div>);
 }
 function Select({label,value,onChange,options}){
   return(<div style={{marginBottom:8}}><label style={labelSt}>{label}</label>
@@ -78,14 +96,24 @@ function Checkbox({label,checked,onChange}){
     {label}
   </label>);
 }
-function RateFields({rateType,rates,onChange,amexDirect}){
+function RateFields({rateType,rates,onChange,amexDirect,existingRates,isExisting}){
   const type = RATE_TYPES.find(t=>t.id===rateType); if(!type) return null;
   return(<div>
     {type.fields.map(f=>{
       const cur = rates[f]||{rate:'',fee:''};
+      const rateNum = parseFloat(cur.rate);
+      const feeNum = parseFloat(cur.fee);
+      let rateWarning=null;
+      if(f==='blended' && !cur.rate) rateWarning='Rate required';
+      else if(!isNaN(rateNum) && !isExisting && existingRates){
+        const exNum = parseFloat(existingRates[f]?.rate);
+        if(!isNaN(exNum) && rateNum>exNum) rateWarning='New offer rate is higher than current — is this correct?';
+      }
+      if(!rateWarning && !isNaN(rateNum) && rateNum>4.5) rateWarning='This rate looks high — double check before sending';
+      const feeWarning = (!isNaN(feeNum) && feeNum>1) ? `Fixed fees are usually under $1.00 — did you mean $${(feeNum/100).toFixed(2)}?` : null;
       return(<div key={f} style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:'0 12px'}}>
-        <Field label={rateLabel(f,amexDirect)+' (ex GST %)'} value={cur.rate} onChange={v=>onChange({...rates,[f]:{...cur,rate:v}})} placeholder="0.00" suffix="%"/>
-        <Field label="Fixed Fee (optional)" value={cur.fee} onChange={v=>onChange({...rates,[f]:{...cur,fee:v}})} placeholder="None" suffix="$"/>
+        <Field label={rateLabel(f,amexDirect)+' (ex GST %)'} value={cur.rate} onChange={v=>onChange({...rates,[f]:{...cur,rate:v}})} placeholder="0.00" suffix="%" warning={rateWarning}/>
+        <Field label="Fixed Fee (optional)" value={cur.fee} onChange={v=>onChange({...rates,[f]:{...cur,fee:v}})} placeholder="None" suffix="$" warning={feeWarning}/>
       </div>);
     })}
   </div>);
@@ -103,11 +131,12 @@ function SubsidyFields({data,onChange}){
 }
 
 // ─── Preview Card ────────────────────────────────────────────────────────────
-function PreviewCard({brand,merchant,existing,options,customerLogo,repName,amexDirect,amexQrDataUrl}){
+function PreviewCard({brand,merchant,existing,options,customerLogo,repName,amexDirect,amexQrDataUrl,expiryDays,customNote,markAsDraft,venueNotes}){
   const b = BRANDS[brand];
   const optCount = options.length;
   const rateTypeObj = id => RATE_TYPES.find(t=>t.id===id);
   const today = new Date().toLocaleDateString('en-AU',{day:'numeric',month:'long',year:'numeric'});
+  const validUntil = addDays(expiryDays||14);
 
   const RowItem = ({label,value,muted})=>(
     <div style={{display:'flex',justifyContent:'space-between',alignItems:'baseline',padding:'3px 0',borderBottom:`1px solid ${muted?'#eee':b.primary+'15'}`,gap:8}}>
@@ -132,7 +161,12 @@ function PreviewCard({brand,merchant,existing,options,customerLogo,repName,amexD
   const SectionLabel = ({children,muted})=>(<div style={{fontSize:8,fontWeight:700,color:muted?'#bbb':b.primary,textTransform:'uppercase',letterSpacing:1.2,marginTop:8,marginBottom:2,opacity:muted?0.7:0.5}}>{children}</div>);
 
   return(
-    <div id="proposal-output" style={{width:680,background:'#fff',borderRadius:14,overflow:'hidden',fontFamily:'Inter, sans-serif',boxShadow:'0 4px 32px rgba(0,0,0,0.08)'}}>
+    <div id="proposal-output" style={{width:680,background:'#fff',borderRadius:14,overflow:'hidden',fontFamily:'Inter, sans-serif',boxShadow:'0 4px 32px rgba(0,0,0,0.08)',position:'relative'}}>
+      {markAsDraft&&(
+        <div style={{position:'absolute',inset:0,display:'flex',alignItems:'center',justifyContent:'center',pointerEvents:'none',zIndex:5,overflow:'hidden'}}>
+          <div style={{fontSize:80,fontWeight:900,color:b.primary,opacity:0.15,transform:'rotate(-30deg)',letterSpacing:10,whiteSpace:'nowrap'}}>DRAFT</div>
+        </div>
+      )}
       {/* Header */}
       <div style={{background:b.gradient,padding:'20px 28px 16px'}}>
         <div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}>
@@ -144,10 +178,17 @@ function PreviewCard({brand,merchant,existing,options,customerLogo,repName,amexD
           <div style={{textAlign:'right',display:'flex',flexDirection:'column',alignItems:'flex-end',gap:3}}>
             <div style={{color:'rgba(255,255,255,0.5)',fontSize:7,textTransform:'uppercase',letterSpacing:1.5,fontWeight:600}}>Powered by</div>
             <OolioPayLogo size={22} fill="#fff"/>
-            {repName?<div style={{color:'rgba(255,255,255,0.6)',fontSize:7,marginTop:2}}>Prepared by {repName} · {today}</div>:<div style={{color:'rgba(255,255,255,0.5)',fontSize:7,marginTop:1}}>{today}</div>}
+            {repName?<div style={{color:'rgba(255,255,255,0.6)',fontSize:7,marginTop:2}}>Prepared by {repName} · {today} · Valid until {validUntil}</div>:<div style={{color:'rgba(255,255,255,0.5)',fontSize:7,marginTop:1}}>{today} · Valid until {validUntil}</div>}
           </div>
         </div>
+        {venueNotes&&<div style={{color:'rgba(255,255,255,0.7)',fontSize:8,marginTop:6}}>{merchant.name||'Merchant Name'} · {venueNotes}</div>}
       </div>
+
+      {customNote&&customNote.trim()&&(
+        <div style={{margin:'10px 28px 0',padding:'8px 12px',background:b.primary+'10',borderLeft:`3px solid ${b.primary}`,borderRadius:4}}>
+          <div style={{fontSize:9,fontStyle:'italic',color:b.primary,opacity:0.85,lineHeight:1.5}}>&ldquo;{customNote}&rdquo;</div>
+        </div>
+      )}
 
       {/* Body */}
       <div style={{padding:'12px 28px 10px',display:'grid',gridTemplateColumns:optCount===1?'1fr 1fr':`130px repeat(${optCount}, 1fr)`,gap:14}}>
@@ -200,10 +241,40 @@ export default function ProposalTool(){
   const [amexDirect,setAmexDirect]=useState(false);
   const [amexQrDataUrl,setAmexQrDataUrl]=useState(null);
   const [amexLinkCopied,setAmexLinkCopied]=useState(false);
+  const [expiryDays,setExpiryDays]=useState('14');
+  const [customNote,setCustomNote]=useState('');
+  const [markAsDraft,setMarkAsDraft]=useState(false);
+  const [venueNotes,setVenueNotes]=useState('');
+  const [draftSavedVisible,setDraftSavedVisible]=useState(false);
+  const [linkCopied,setLinkCopied]=useState(false);
+  const [bannerDismissed,setBannerDismissed]=useState(false);
+  const [hydrated,setHydrated]=useState(false);
   const [exporting,setExporting]=useState(false);
   const [renderedPng,setRenderedPng]=useState(null);
   const outputRef=useRef(null);
+  const firstSaveRef=useRef(true);
+  const urlSyncTimerRef=useRef(null);
   const b=BRANDS[brand];
+
+  const collectState=useCallback(()=>({
+    brand,merchant,existing,options,repName,amexDirect,
+    expiryDays,customNote,markAsDraft,venueNotes,
+  }),[brand,merchant,existing,options,repName,amexDirect,expiryDays,customNote,markAsDraft,venueNotes]);
+
+  const applyState=useCallback((s)=>{
+    if(!s)return;
+    if(s.brand)setBrand(s.brand);
+    if(s.merchant)setMerchant(s.merchant);
+    if(s.existing)setExisting(s.existing);
+    if(s.options)setOptions(s.options);
+    if(typeof s.repName==='string')setRepName(s.repName);
+    if(typeof s.amexDirect==='boolean')setAmexDirect(s.amexDirect);
+    if(s.expiryDays)setExpiryDays(s.expiryDays);
+    if(typeof s.customNote==='string')setCustomNote(s.customNote);
+    if(typeof s.markAsDraft==='boolean')setMarkAsDraft(s.markAsDraft);
+    if(typeof s.venueNotes==='string')setVenueNotes(s.venueNotes);
+    if(typeof s.customerLogo==='string'||s.customerLogo===null)setCustomerLogo(s.customerLogo??null);
+  },[]);
 
   const handleLogoUpload=e=>{const file=e.target.files[0];if(!file)return;const reader=new FileReader();reader.onload=ev=>setCustomerLogo(ev.target.result);reader.readAsDataURL(file);};
   const addOption=()=>{if(options.length<3)setOptions([...options,emptyOption()]);};
@@ -229,6 +300,94 @@ export default function ProposalTool(){
       setAmexLinkCopied(true);
       setTimeout(()=>setAmexLinkCopied(false),2000);
     }catch(err){console.error('Copy failed:',err);alert('Could not copy link. Check console.');}
+  },[]);
+
+  // Restore state on first load: a shared ?d= link takes priority over a locally
+  // saved draft, since a rep opening a colleague's link shouldn't clobber it.
+  // `hydrated` only flips true once this has run, and every effect below that
+  // persists state waits on it — otherwise a stale pre-restore render can write
+  // blank state over the very draft we're trying to load (see: React StrictMode
+  // double-invoking this effect in dev before the restore's setState commits).
+  useEffect(()=>{
+    try{
+      if(sessionStorage.getItem(BANNER_DISMISS_KEY)==='1')setBannerDismissed(true);
+    }catch(err){/* sessionStorage unavailable — ignore */}
+    try{
+      const params=new URLSearchParams(window.location.search);
+      const d=params.get('d');
+      if(d){
+        applyState(JSON.parse(b64Decode(d)));
+        setHydrated(true);
+        return;
+      }
+    }catch(err){console.error('Failed to parse shared link state:',err);}
+    try{
+      const raw=localStorage.getItem(DRAFT_KEY);
+      if(raw)applyState(JSON.parse(raw));
+    }catch(err){console.error('Failed to restore saved draft:',err);}
+    setHydrated(true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  },[]);
+
+  // Auto-save the full draft (including the logo) to localStorage on every change.
+  useEffect(()=>{
+    if(!hydrated)return;
+    try{
+      localStorage.setItem(DRAFT_KEY,JSON.stringify({...collectState(),customerLogo}));
+    }catch(err){console.error('Failed to save draft:',err);}
+    if(firstSaveRef.current){
+      firstSaveRef.current=false;
+      return;
+    }
+    setDraftSavedVisible(true);
+    const t=setTimeout(()=>setDraftSavedVisible(false),2000);
+    return()=>clearTimeout(t);
+  },[hydrated,collectState,customerLogo]);
+
+  // Mirror state into the URL (debounced, logo excluded — it would make the link
+  // impractically long) so the "Copy Link" button always has something fresh to share.
+  useEffect(()=>{
+    if(!hydrated)return;
+    if(urlSyncTimerRef.current)clearTimeout(urlSyncTimerRef.current);
+    urlSyncTimerRef.current=setTimeout(()=>{
+      try{
+        const encoded=b64Encode(JSON.stringify(collectState()));
+        const url=new URL(window.location.href);
+        url.searchParams.set('d',encoded);
+        window.history.replaceState(null,'',url.toString());
+      }catch(err){console.error('Failed to sync state to URL:',err);}
+    },1000);
+    return()=>clearTimeout(urlSyncTimerRef.current);
+  },[hydrated,collectState]);
+
+  const copyLink=useCallback(async()=>{
+    try{
+      const encoded=b64Encode(JSON.stringify(collectState()));
+      const url=new URL(window.location.href);
+      url.searchParams.set('d',encoded);
+      window.history.replaceState(null,'',url.toString());
+      await navigator.clipboard.writeText(url.toString());
+      setLinkCopied(true);
+      setTimeout(()=>setLinkCopied(false),2000);
+    }catch(err){console.error('Copy link failed:',err);alert('Could not copy link. Check console.');}
+  },[collectState]);
+
+  const clearDraft=useCallback(()=>{
+    if(!window.confirm('Start a new proposal? This will clear the current draft.'))return;
+    try{
+      localStorage.removeItem(DRAFT_KEY);
+      const url=new URL(window.location.href);
+      url.searchParams.delete('d');
+      window.history.replaceState(null,'',url.toString());
+    }catch(err){console.error('Failed to clear draft:',err);}
+    setBrand('oolio');setMerchant({name:'',ttv:''});setCustomerLogo(null);
+    setExisting(emptyExisting());setOptions([emptyOption()]);setRepName('');
+    setAmexDirect(false);setExpiryDays('14');setCustomNote('');setMarkAsDraft(false);setVenueNotes('');
+  },[]);
+
+  const dismissBanner=useCallback(()=>{
+    setBannerDismissed(true);
+    try{sessionStorage.setItem(BANNER_DISMISS_KEY,'1');}catch(err){/* ignore */}
   },[]);
 
   const doExport=useCallback(async(format)=>{
@@ -280,12 +439,18 @@ export default function ProposalTool(){
           <OolioPayLogo size={24} fill="#fff"/>
           <span style={{color:'#fff',fontSize:15,fontWeight:700,letterSpacing:0.5}}>Rate Proposal Generator</span>
         </div>
-        <div style={{display:'flex',gap:8}}>
-          {['oolio','ordermate'].map(bk=>(
-            <button key={bk} onClick={()=>setBrand(bk)} style={{padding:'6px 16px',borderRadius:20,border:brand===bk?'2px solid #fff':'2px solid rgba(255,255,255,0.3)',background:brand===bk?'rgba(255,255,255,0.2)':'transparent',color:'#fff',fontWeight:700,fontSize:12,cursor:'pointer',fontFamily:'inherit'}}>
-              {BRANDS[bk].name}
-            </button>
-          ))}
+        <div style={{display:'flex',alignItems:'center',gap:12}}>
+          <span style={{color:'#fff',fontSize:10,opacity:draftSavedVisible?0.7:0,transition:'opacity 0.4s'}}>Draft saved</span>
+          <button onClick={clearDraft} style={{padding:'6px 14px',borderRadius:20,border:'2px solid rgba(255,255,255,0.3)',background:'transparent',color:'#fff',fontWeight:700,fontSize:11,cursor:'pointer',fontFamily:'inherit'}}>
+            Clear / Start New
+          </button>
+          <div style={{display:'flex',gap:8}}>
+            {['oolio','ordermate'].map(bk=>(
+              <button key={bk} onClick={()=>setBrand(bk)} style={{padding:'6px 16px',borderRadius:20,border:brand===bk?'2px solid #fff':'2px solid rgba(255,255,255,0.3)',background:brand===bk?'rgba(255,255,255,0.2)':'transparent',color:'#fff',fontWeight:700,fontSize:12,cursor:'pointer',fontFamily:'inherit'}}>
+                {BRANDS[bk].name}
+              </button>
+            ))}
+          </div>
         </div>
       </div>
 
@@ -296,13 +461,17 @@ export default function ProposalTool(){
           <div style={{background:'#fff',borderRadius:12,padding:18,marginBottom:16,boxShadow:'0 1px 6px rgba(0,0,0,0.06)'}}>
             <div style={sectionTitle(b)}>Merchant Info</div>
             <Field label="Merchant / Venue Name" value={merchant.name} onChange={v=>setMerchant({...merchant,name:v})} placeholder="e.g. The Local Pub"/>
-            <Field label="Monthly TTV ($)" value={merchant.ttv} onChange={v=>setMerchant({...merchant,ttv:v})} placeholder="300000" suffix="$"/>
+            <Field label="Monthly TTV ($)" value={merchant.ttv} onChange={v=>setMerchant({...merchant,ttv:v})} placeholder="300000" suffix="$" warning={!merchant.ttv?'TTV required for T&Cs':null}/>
+            <Field label="Venues (optional)" value={venueNotes} onChange={setVenueNotes} placeholder="e.g. 3 venues — Sydney CBD, Parramatta, Bondi"/>
             <Field label="Prepared By" value={repName} onChange={setRepName} placeholder="e.g. Olivia Mayes"/>
+            <Select label="Proposal Valid For" value={expiryDays} onChange={setExpiryDays} options={EXPIRY_OPTIONS}/>
+            <TextAreaField label="Personal Note (optional)" value={customNote} onChange={setCustomNote} placeholder="e.g. Great speaking with you today, Sarah — as discussed..."/>
             <div style={{marginBottom:8}}><label style={labelSt}>Customer Logo (optional)</label>
               <input type="file" accept="image/*" onChange={handleLogoUpload} style={{fontSize:12}}/>
               <div style={{fontSize:10,color:'#999',marginTop:4}}>For best results, use a logo with a transparent background (PNG).</div>
               {customerLogo&&<button onClick={()=>setCustomerLogo(null)} style={{fontSize:11,color:b.primary,background:'none',border:'none',cursor:'pointer',marginTop:4}}>Remove logo</button>}
             </div>
+            <Checkbox label="Mark as Draft" checked={markAsDraft} onChange={setMarkAsDraft}/>
           </div>
 
           <div style={{background:'#fff',borderRadius:12,padding:18,marginBottom:16,boxShadow:'0 1px 6px rgba(0,0,0,0.06)'}}>
@@ -313,11 +482,11 @@ export default function ProposalTool(){
           <div style={{background:'#fff',borderRadius:12,padding:18,marginBottom:16,boxShadow:'0 1px 6px rgba(0,0,0,0.06)'}}>
             <div style={sectionTitle(b)}>Existing Contract</div>
             <Select label="In-Store Rate Type" value={existing.rateType} onChange={v=>setExisting({...existing,rateType:v})} options={RATE_TYPES}/>
-            <RateFields rateType={existing.rateType} rates={existing.rates} onChange={r=>setExisting({...existing,rates:r})} amexDirect={amexDirect}/>
+            <RateFields rateType={existing.rateType} rates={existing.rates} onChange={r=>setExisting({...existing,rates:r})} amexDirect={amexDirect} isExisting/>
             <Checkbox label="Add E-Commerce Rates" checked={existing.hasEcom} onChange={v=>setExisting({...existing,hasEcom:v})}/>
             {existing.hasEcom&&(<>
               <Select label="E-Commerce Rate Type" value={existing.ecomRateType} onChange={v=>setExisting({...existing,ecomRateType:v})} options={RATE_TYPES}/>
-              <RateFields rateType={existing.ecomRateType} rates={existing.ecomRates} onChange={r=>setExisting({...existing,ecomRates:r})} amexDirect={amexDirect}/>
+              <RateFields rateType={existing.ecomRateType} rates={existing.ecomRates} onChange={r=>setExisting({...existing,ecomRates:r})} amexDirect={amexDirect} isExisting/>
             </>)}
             <div style={{marginTop:8}}><SubsidyFields data={existing} onChange={setExisting}/></div>
           </div>
@@ -329,11 +498,11 @@ export default function ProposalTool(){
                 {options.length>1&&<button onClick={()=>removeOption(i)} style={{fontSize:11,color:'#c00',background:'none',border:'none',cursor:'pointer'}}>Remove</button>}
               </div>
               <Select label="In-Store Rate Type" value={opt.rateType} onChange={v=>updateOption(i,{...opt,rateType:v})} options={RATE_TYPES}/>
-              <RateFields rateType={opt.rateType} rates={opt.rates} onChange={r=>updateOption(i,{...opt,rates:r})} amexDirect={amexDirect}/>
+              <RateFields rateType={opt.rateType} rates={opt.rates} onChange={r=>updateOption(i,{...opt,rates:r})} amexDirect={amexDirect} existingRates={existing.rates}/>
               <Checkbox label="Add E-Commerce Rates" checked={opt.hasEcom} onChange={v=>updateOption(i,{...opt,hasEcom:v})}/>
               {opt.hasEcom&&(<>
                 <Select label="E-Commerce Rate Type" value={opt.ecomRateType} onChange={v=>updateOption(i,{...opt,ecomRateType:v})} options={RATE_TYPES}/>
-                <RateFields rateType={opt.ecomRateType} rates={opt.ecomRates} onChange={r=>updateOption(i,{...opt,ecomRates:r})} amexDirect={amexDirect}/>
+                <RateFields rateType={opt.ecomRateType} rates={opt.ecomRates} onChange={r=>updateOption(i,{...opt,ecomRates:r})} amexDirect={amexDirect} existingRates={existing.ecomRates}/>
               </>)}
               <div style={{marginTop:8}}><SubsidyFields data={opt} onChange={d=>updateOption(i,d)}/></div>
             </div>
@@ -355,6 +524,9 @@ export default function ProposalTool(){
                   {amexLinkCopied?'✓ Copied':'🔗 Copy AMEX Link'}
                 </button>
               )}
+              <button onClick={copyLink} style={{padding:'7px 14px',borderRadius:8,border:`1.5px solid ${b.primary}40`,background:'#fff',color:b.primary,fontWeight:600,fontSize:11,cursor:'pointer',fontFamily:'inherit'}}>
+                {linkCopied?'✓ Link copied!':'🔗 Copy Link'}
+              </button>
               <button onClick={()=>doExport('render')} disabled={exporting} style={{padding:'7px 14px',borderRadius:8,border:`1.5px solid ${b.primary}40`,background:'#fff',color:b.primary,fontWeight:600,fontSize:11,cursor:exporting?'wait':'pointer',fontFamily:'inherit',opacity:exporting?0.6:1}}>
                 {exporting?'...':'📋 Copy Image'}
               </button>
@@ -366,8 +538,14 @@ export default function ProposalTool(){
               </button>
             </div>
           </div>
+          {!bannerDismissed&&(
+            <div style={{display:'flex',alignItems:'center',gap:10,background:b.primary+'0d',borderLeft:`3px solid ${b.primary}`,borderRadius:8,padding:'8px 14px',marginBottom:12,fontSize:11,color:b.primary}}>
+              <div style={{flex:1}}>📥 <strong>When you're ready to share</strong>, use Download PNG or PDF above — the live preview cannot be shared directly.</div>
+              <button onClick={dismissBanner} style={{background:'none',border:'none',cursor:'pointer',color:b.primary,fontSize:14,fontWeight:700,lineHeight:1,padding:0}}>×</button>
+            </div>
+          )}
           <div style={{display:'inline-block'}} ref={outputRef}>
-            <PreviewCard brand={brand} merchant={merchant} existing={existing} options={options} customerLogo={customerLogo} repName={repName} amexDirect={amexDirect} amexQrDataUrl={amexQrDataUrl}/>
+            <PreviewCard brand={brand} merchant={merchant} existing={existing} options={options} customerLogo={customerLogo} repName={repName} amexDirect={amexDirect} amexQrDataUrl={amexQrDataUrl} expiryDays={expiryDays} customNote={customNote} markAsDraft={markAsDraft} venueNotes={venueNotes}/>
           </div>
           {renderedPng&&(
             <div style={{marginTop:16}}>
