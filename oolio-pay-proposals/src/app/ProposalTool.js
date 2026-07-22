@@ -36,6 +36,7 @@ const RATE_TYPES = [
 ];
 const RATE_LABELS = { blended:'Blended MSF Rate', debit:'Debit Rate', credit:'Credit Rate', amex:'AMEX Rate', international:'International Rate' };
 const RATE_FIELD_KEYS = ['blended','debit','credit','amex','international'];
+const rateLabel = (f,amexDirect) => f==='amex' && amexDirect ? 'AMEX Rate (Direct) *' : RATE_LABELS[f];
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 const fmt = v => { const n = parseFloat(v); return isNaN(n) ? '—' : n.toFixed(2)+'%'; };
@@ -76,13 +77,13 @@ function Checkbox({label,checked,onChange}){
     {label}
   </label>);
 }
-function RateFields({rateType,rates,onChange}){
+function RateFields({rateType,rates,onChange,amexDirect}){
   const type = RATE_TYPES.find(t=>t.id===rateType); if(!type) return null;
   return(<div>
     {type.fields.map(f=>{
       const cur = rates[f]||{rate:'',fee:''};
       return(<div key={f} style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:'0 12px'}}>
-        <Field label={RATE_LABELS[f]+' (ex GST %)'} value={cur.rate} onChange={v=>onChange({...rates,[f]:{...cur,rate:v}})} placeholder="0.00" suffix="%"/>
+        <Field label={rateLabel(f,amexDirect)+' (ex GST %)'} value={cur.rate} onChange={v=>onChange({...rates,[f]:{...cur,rate:v}})} placeholder="0.00" suffix="%"/>
         <Field label="Fixed Fee (optional)" value={cur.fee} onChange={v=>onChange({...rates,[f]:{...cur,fee:v}})} placeholder="None" suffix="$"/>
       </div>);
     })}
@@ -101,7 +102,7 @@ function SubsidyFields({data,onChange}){
 }
 
 // ─── Preview Card ────────────────────────────────────────────────────────────
-function PreviewCard({brand,merchant,existing,options,customerLogo,repName}){
+function PreviewCard({brand,merchant,existing,options,customerLogo,repName,amexDirect}){
   const b = BRANDS[brand];
   const optCount = options.length;
   const rateTypeObj = id => RATE_TYPES.find(t=>t.id===id);
@@ -110,14 +111,14 @@ function PreviewCard({brand,merchant,existing,options,customerLogo,repName}){
   const RowItem = ({label,value,muted})=>(
     <div style={{display:'flex',justifyContent:'space-between',alignItems:'baseline',padding:'3px 0',borderBottom:`1px solid ${muted?'#eee':b.primary+'15'}`,gap:8}}>
       <span style={{fontSize:9,color:muted?'#aaa':'#555',whiteSpace:'nowrap',flexShrink:0}}>{label}</span>
-      <span style={{fontSize:10,fontWeight:700,color:muted?'#999':b.primary,textAlign:'right',flex:'1 1 auto',minWidth:0,wordBreak:'break-word'}}>{value}</span>
+      <span style={{fontSize:9,fontWeight:700,color:muted?'#999':b.primary,textAlign:'right',flex:'1 1 auto',minWidth:0,wordBreak:'break-word',overflowWrap:'anywhere'}}>{value}</span>
     </div>
   );
   const renderRateSet = (rateTypeId,rates,muted)=>{
     const type=rateTypeObj(rateTypeId);if(!type)return null;
     return type.fields.map(f=>{
       const cur=rates?.[f]||{};
-      return <RowItem key={f} label={RATE_LABELS[f]} value={fmtRateFee(cur.rate,cur.fee)} muted={muted}/>;
+      return <RowItem key={f} label={rateLabel(f,amexDirect)} value={fmtRateFee(cur.rate,cur.fee)} muted={muted}/>;
     });
   };
   const renderSubsidy = (opt,muted)=>{
@@ -148,7 +149,7 @@ function PreviewCard({brand,merchant,existing,options,customerLogo,repName}){
       </div>
 
       {/* Body */}
-      <div style={{padding:'12px 28px 10px',display:'grid',gridTemplateColumns:`130px repeat(${optCount}, 1fr)`,gap:14}}>
+      <div style={{padding:'12px 28px 10px',display:'grid',gridTemplateColumns:optCount===1?'1fr 1fr':`130px repeat(${optCount}, 1fr)`,gap:14}}>
         <div style={{opacity:0.5,minWidth:0}}>
           <div style={{fontSize:9,fontWeight:800,color:'#999',textTransform:'uppercase',letterSpacing:1,paddingBottom:4,borderBottom:'1.5px solid #ddd',marginBottom:2}}>Current</div>
           <SectionLabel muted>In-Store Rates</SectionLabel>{renderRateSet(existing.rateType,existing.rates,true)}
@@ -169,8 +170,13 @@ function PreviewCard({brand,merchant,existing,options,customerLogo,repName}){
       <div style={{background:'#f7f7f8',padding:'10px 28px 16px',borderTop:'1px solid #eee'}}>
         <img src={TERMINAL_IMG} alt="" style={{float:'right',width:100,objectFit:'contain',marginLeft:14,marginTop:-4}}/>
         <div style={{fontSize:8,color:b.primary,fontWeight:600,letterSpacing:0.3,opacity:0.6,marginBottom:4}}>All rates and fees shown are exclusive of GST.</div>
+        {amexDirect&&(
+          <div style={{fontSize:8,color:'#aaa',lineHeight:1.5,marginBottom:4}}>
+            <strong style={{color:b.primary,opacity:0.8}}>AMEX Merchant Facility:</strong> This proposal assumes the Merchant will obtain their own American Express Merchant Account. Upon approval, the account will be configured for acceptance via the supplied Oolio payment terminals. <a href="https://www.americanexpress.com/en-au/business/merchant/manage-account.html#get-started" style={{color:b.primary}}>Apply here</a>.
+          </div>
+        )}
         <div style={{fontSize:8,color:'#aaa',lineHeight:1.5}}>
-          *Terms &amp; Conditions apply. Discounts and rates are applicable based on a minimum monthly card transaction volume of 80% of {fmtDollar(merchant.ttv)}. This proposal is indicative only and subject to formal agreement.
+          *Terms &amp; Conditions apply. Discounts and rates are applicable based on a minimum monthly card transaction volume of 80% of {fmtDollar(merchant.ttv)}. This proposal is indicative only and subject to formal agreement.{amexDirect?' American Express merchant fees are billed directly by American Express and are not included in the rates outlined in this proposal.':''}
         </div>
       </div>
     </div>
@@ -185,6 +191,7 @@ export default function ProposalTool(){
   const [existing,setExisting]=useState(emptyExisting());
   const [options,setOptions]=useState([emptyOption()]);
   const [repName,setRepName]=useState('');
+  const [amexDirect,setAmexDirect]=useState(false);
   const [exporting,setExporting]=useState(false);
   const [renderedPng,setRenderedPng]=useState(null);
   const outputRef=useRef(null);
@@ -249,18 +256,24 @@ export default function ProposalTool(){
             <Field label="Prepared By" value={repName} onChange={setRepName} placeholder="e.g. Olivia Mayes"/>
             <div style={{marginBottom:8}}><label style={labelSt}>Customer Logo (optional)</label>
               <input type="file" accept="image/*" onChange={handleLogoUpload} style={{fontSize:12}}/>
+              <div style={{fontSize:10,color:'#999',marginTop:4}}>For best results, use a logo with a transparent background (PNG).</div>
               {customerLogo&&<button onClick={()=>setCustomerLogo(null)} style={{fontSize:11,color:b.primary,background:'none',border:'none',cursor:'pointer',marginTop:4}}>Remove logo</button>}
             </div>
           </div>
 
           <div style={{background:'#fff',borderRadius:12,padding:18,marginBottom:16,boxShadow:'0 1px 6px rgba(0,0,0,0.06)'}}>
+            <div style={sectionTitle(b)}>Proposal Options</div>
+            <Checkbox label="AMEX Direct (merchant sets up own account)" checked={amexDirect} onChange={setAmexDirect}/>
+          </div>
+
+          <div style={{background:'#fff',borderRadius:12,padding:18,marginBottom:16,boxShadow:'0 1px 6px rgba(0,0,0,0.06)'}}>
             <div style={sectionTitle(b)}>Existing Contract</div>
             <Select label="In-Store Rate Type" value={existing.rateType} onChange={v=>setExisting({...existing,rateType:v})} options={RATE_TYPES}/>
-            <RateFields rateType={existing.rateType} rates={existing.rates} onChange={r=>setExisting({...existing,rates:r})}/>
+            <RateFields rateType={existing.rateType} rates={existing.rates} onChange={r=>setExisting({...existing,rates:r})} amexDirect={amexDirect}/>
             <Checkbox label="Add E-Commerce Rates" checked={existing.hasEcom} onChange={v=>setExisting({...existing,hasEcom:v})}/>
             {existing.hasEcom&&(<>
               <Select label="E-Commerce Rate Type" value={existing.ecomRateType} onChange={v=>setExisting({...existing,ecomRateType:v})} options={RATE_TYPES}/>
-              <RateFields rateType={existing.ecomRateType} rates={existing.ecomRates} onChange={r=>setExisting({...existing,ecomRates:r})}/>
+              <RateFields rateType={existing.ecomRateType} rates={existing.ecomRates} onChange={r=>setExisting({...existing,ecomRates:r})} amexDirect={amexDirect}/>
             </>)}
             <div style={{marginTop:8}}><SubsidyFields data={existing} onChange={setExisting}/></div>
           </div>
@@ -272,11 +285,11 @@ export default function ProposalTool(){
                 {options.length>1&&<button onClick={()=>removeOption(i)} style={{fontSize:11,color:'#c00',background:'none',border:'none',cursor:'pointer'}}>Remove</button>}
               </div>
               <Select label="In-Store Rate Type" value={opt.rateType} onChange={v=>updateOption(i,{...opt,rateType:v})} options={RATE_TYPES}/>
-              <RateFields rateType={opt.rateType} rates={opt.rates} onChange={r=>updateOption(i,{...opt,rates:r})}/>
+              <RateFields rateType={opt.rateType} rates={opt.rates} onChange={r=>updateOption(i,{...opt,rates:r})} amexDirect={amexDirect}/>
               <Checkbox label="Add E-Commerce Rates" checked={opt.hasEcom} onChange={v=>updateOption(i,{...opt,hasEcom:v})}/>
               {opt.hasEcom&&(<>
                 <Select label="E-Commerce Rate Type" value={opt.ecomRateType} onChange={v=>updateOption(i,{...opt,ecomRateType:v})} options={RATE_TYPES}/>
-                <RateFields rateType={opt.ecomRateType} rates={opt.ecomRates} onChange={r=>updateOption(i,{...opt,ecomRates:r})}/>
+                <RateFields rateType={opt.ecomRateType} rates={opt.ecomRates} onChange={r=>updateOption(i,{...opt,ecomRates:r})} amexDirect={amexDirect}/>
               </>)}
               <div style={{marginTop:8}}><SubsidyFields data={opt} onChange={d=>updateOption(i,d)}/></div>
             </div>
@@ -305,7 +318,7 @@ export default function ProposalTool(){
             </div>
           </div>
           <div style={{display:'inline-block'}} ref={outputRef}>
-            <PreviewCard brand={brand} merchant={merchant} existing={existing} options={options} customerLogo={customerLogo} repName={repName}/>
+            <PreviewCard brand={brand} merchant={merchant} existing={existing} options={options} customerLogo={customerLogo} repName={repName} amexDirect={amexDirect}/>
           </div>
           {renderedPng&&(
             <div style={{marginTop:16}}>
