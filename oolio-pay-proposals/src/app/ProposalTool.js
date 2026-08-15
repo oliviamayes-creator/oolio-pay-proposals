@@ -217,6 +217,29 @@ function SubsidyFields({data,onChange,brandColor}){
   </div>);
 }
 
+// Two-line price stack (shared by PreviewCard and NewBusinessPreviewCard):
+// strikethrough RRP on top (only when a discount is actually set), then what
+// the merchant pays — FREE in green at 100% off, otherwise the calculated
+// price in brand colour. No discount = just the plain amount, no strikethrough.
+function PriceRow({label,rrpNum,discPctRaw,brandColor,muted}){
+  if(isNaN(rrpNum))return null;
+  const discNum=parseFloat(discPctRaw);
+  const hasDisc=!isNaN(discNum)&&discNum>0;
+  const final=hasDisc?rrpNum-rrpNum*(discNum/100):rrpNum;
+  const isFree=hasDisc&&discNum>=100;
+  const freeColor=muted?'#8fbfae':'#0F6E56';
+  const priceColor=muted?'#999':brandColor;
+  return(
+    <div style={{display:'flex',justifyContent:'space-between',alignItems:'baseline',padding:'3px 0',borderBottom:`1px solid ${muted?'#eee':brandColor+'15'}`,gap:8}}>
+      <span style={{fontSize:9,color:muted?'#aaa':'#555',whiteSpace:'nowrap',flexShrink:0}}>{label}</span>
+      <div style={{textAlign:'right',flex:'1 1 auto',minWidth:0}}>
+        {hasDisc&&<div style={{fontSize:8,color:muted?'#ccc':'#bbb',textDecoration:'line-through'}}>{fmtMoney(rrpNum)}/mo</div>}
+        <div style={{fontSize:9,fontWeight:700,color:isFree?freeColor:priceColor}}>{isFree?'FREE':`${fmtMoney(final)}/mo`}</div>
+      </div>
+    </div>
+  );
+}
+
 // ─── Preview Card ────────────────────────────────────────────────────────────
 function PreviewCard({brand,merchant,existing,options,customerLogo,repName,amexDirect,amexQrDataUrl,expiryDays,customNote,markAsDraft,venueNotes,contractTerm}){
   const b = BRANDS[brand];
@@ -242,35 +265,13 @@ function PreviewCard({brand,merchant,existing,options,customerLogo,repName,amexD
       return <RowItem key={f} label={label} value={fmtRateFee(cur.rate,cur.fee)} muted={muted}/>;
     });
   };
-  // Two-line price stack: strikethrough RRP on top (only when a discount is
-  // actually set), then what the merchant pays — FREE in green at 100% off,
-  // otherwise the calculated price in brand colour. No discount = just the
-  // plain amount, no strikethrough.
-  const PriceRow = ({label,rrpNum,discPctRaw,muted})=>{
-    if(isNaN(rrpNum))return null;
-    const discNum=parseFloat(discPctRaw);
-    const hasDisc=!isNaN(discNum)&&discNum>0;
-    const final=hasDisc?rrpNum-rrpNum*(discNum/100):rrpNum;
-    const isFree=hasDisc&&discNum>=100;
-    const freeColor=muted?'#8fbfae':'#0F6E56';
-    const priceColor=muted?'#999':b.primary;
-    return(
-      <div style={{display:'flex',justifyContent:'space-between',alignItems:'baseline',padding:'3px 0',borderBottom:`1px solid ${muted?'#eee':b.primary+'15'}`,gap:8}}>
-        <span style={{fontSize:9,color:muted?'#aaa':'#555',whiteSpace:'nowrap',flexShrink:0}}>{label}</span>
-        <div style={{textAlign:'right',flex:'1 1 auto',minWidth:0}}>
-          {hasDisc&&<div style={{fontSize:8,color:muted?'#ccc':'#bbb',textDecoration:'line-through'}}>{fmtMoney(rrpNum)}/mo</div>}
-          <div style={{fontSize:9,fontWeight:700,color:isFree?freeColor:priceColor}}>{isFree?'FREE':`${fmtMoney(final)}/mo`}</div>
-        </div>
-      </div>
-    );
-  };
   const renderSubsidy = (opt,muted)=>{
     const items=[];
-    if(opt.saasDiscount||opt.saasAmount){items.push(<PriceRow key="saas" label="SaaS" rrpNum={parseFloat(opt.saasAmount)} discPctRaw={opt.saasDiscount} muted={muted}/>);}
-    if(opt.advantageDiscount||opt.advantageAmount){items.push(<PriceRow key="adv" label="Advantage+" rrpNum={parseFloat(opt.advantageAmount)} discPctRaw={opt.advantageDiscount} muted={muted}/>);}
+    if(opt.saasDiscount||opt.saasAmount){items.push(<PriceRow key="saas" label="SaaS" rrpNum={parseFloat(opt.saasAmount)} discPctRaw={opt.saasDiscount} brandColor={b.primary} muted={muted}/>);}
+    if(opt.advantageDiscount||opt.advantageAmount){items.push(<PriceRow key="adv" label="Advantage+" rrpNum={parseFloat(opt.advantageAmount)} discPctRaw={opt.advantageDiscount} brandColor={b.primary} muted={muted}/>);}
     const count=parseFloat(opt.terminalCount);
     if(!isNaN(count)&&count>0){
-      items.push(<PriceRow key="term" label={`EFTPOS Terminal ×${count}`} rrpNum={count*TERMINAL_MONTHLY_COST} discPctRaw={opt.terminalDiscount} muted={muted}/>);
+      items.push(<PriceRow key="term" label={`EFTPOS Terminal ×${count}`} rrpNum={count*TERMINAL_MONTHLY_COST} discPctRaw={opt.terminalDiscount} brandColor={b.primary} muted={muted}/>);
     }
     return items;
   };
@@ -365,34 +366,13 @@ function NewBusinessPreviewCard({brand,merchant,options,customerLogo,repName,ame
       <span style={{fontSize:9,fontWeight:700,color:b.primary,textAlign:'right',flex:'1 1 auto',minWidth:0,wordBreak:'break-word',overflowWrap:'anywhere'}}>{value}</span>
     </div>
   );
-  // Single-line discount summary, e.g. "SaaS: FREE" / "SaaS: $49.00/mo (50% off)".
-  const discountLine = (label,rrpNum,discPctRaw) => {
-    if(isNaN(rrpNum)) return null;
-    const discNum = parseFloat(discPctRaw);
-    const hasDisc = !isNaN(discNum) && discNum>0;
-    const final = hasDisc ? rrpNum-rrpNum*(discNum/100) : rrpNum;
-    if(hasDisc && discNum>=100) return `${label}: FREE`;
-    return hasDisc ? `${label}: ${fmtMoney(final)}/mo (${discNum}% off)` : `${label}: ${fmtMoney(rrpNum)}/mo`;
-  };
-  const terminalLine = (opt) => {
-    const count = parseFloat(opt.terminalCount);
-    const discPct = parseFloat(opt.terminalDiscount)||0;
-    if(isNaN(count) || count<=0 || discPct<=0) return null;
-    const full = count*TERMINAL_MONTHLY_COST;
-    return `${discPct}% off terminal rental (${count} × ${fmtMoney(TERMINAL_MONTHLY_COST)} p/m = ${fmtMoney(full)} p/m)`;
-  };
-
-  const lineSt = {fontSize:9,fontWeight:700,color:b.primary,padding:'3px 0',borderBottom:`1px solid ${b.primary}15`};
-
   const OptionCard = ({opt,idx})=>{
     const type = rateTypeObj(opt.rateType); if(!type) return null;
     const primaryKey = type.fields.includes('blended') ? 'blended' : type.fields[0];
     const secondaryKeys = type.fields.filter(f=>f!==primaryKey && !(f==='amex'&&amexDirect));
     const primaryCur = opt.rates[primaryKey]||{};
     const primaryIsAmexLocked = primaryKey==='amex' && amexDirect;
-    const tLine = terminalLine(opt);
-    const sLine = (opt.saasDiscount||opt.saasAmount) ? discountLine('SaaS',parseFloat(opt.saasAmount),opt.saasDiscount) : null;
-    const aLine = (opt.advantageDiscount||opt.advantageAmount) ? discountLine('Advantage+',parseFloat(opt.advantageAmount),opt.advantageDiscount) : null;
+    const terminalCount = parseFloat(opt.terminalCount);
     return(
       <div style={{flex:1,minWidth:0,border:`1.5px solid ${b.primary}25`,borderRadius:10,padding:'14px 16px'}}>
         <div style={{fontSize:10,fontWeight:800,color:b.primary,textTransform:'uppercase',letterSpacing:1,textAlign:'center',paddingBottom:8,borderBottom:`1.5px solid ${b.primary}25`,marginBottom:8}}>
@@ -411,9 +391,9 @@ function NewBusinessPreviewCard({brand,merchant,options,customerLogo,repName,ame
           const cur = opt.rates[f]||{};
           return <RowItem key={f} label={rateLabel(f,amexDirect)} value={fmtRateFee(cur.rate,cur.fee)}/>;
         })}
-        {tLine&&<div style={lineSt}>{tLine}</div>}
-        {sLine&&<div style={lineSt}>{sLine}</div>}
-        {aLine&&<div style={lineSt}>{aLine}</div>}
+        {(opt.saasDiscount||opt.saasAmount)&&<PriceRow label="SaaS" rrpNum={parseFloat(opt.saasAmount)} discPctRaw={opt.saasDiscount} brandColor={b.primary}/>}
+        {(opt.advantageDiscount||opt.advantageAmount)&&<PriceRow label="Advantage+" rrpNum={parseFloat(opt.advantageAmount)} discPctRaw={opt.advantageDiscount} brandColor={b.primary}/>}
+        {!isNaN(terminalCount)&&terminalCount>0&&<PriceRow label={`EFTPOS Terminal ×${terminalCount}`} rrpNum={terminalCount*TERMINAL_MONTHLY_COST} discPctRaw={opt.terminalDiscount} brandColor={b.primary}/>}
       </div>
     );
   };
