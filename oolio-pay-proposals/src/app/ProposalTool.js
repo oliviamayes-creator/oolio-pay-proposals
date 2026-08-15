@@ -54,6 +54,19 @@ const emptyOption = () => ({
   saasDiscount:'',saasAmount:'',advantageDiscount:'',advantageAmount:'',terminalCount:'',terminalDiscount:''
 });
 const emptyExisting = () => ({ ...emptyOption() });
+const emptyCompetitor = () => ({
+  enabled:false, providerName:'', rateType:'blended_amex_intl', rates:emptyRates(),
+  terminalCount:'', terminalMonthlyCost:'', saasFee:'', inclusions:'',
+});
+const emptyCardMix = () => ({ amexPct:'', intlPct:'' });
+const FEATURES_GRID = [
+  'All-in-one POS & Payments Support 24/7',
+  'Daily Business Day Settlements',
+  'Advanced OrderMate OPAY app for complete integrated pay@table solution with customisable tipping and on-screen splitting by product, guest or custom amounts',
+  'Integrated MOTO',
+  'OolioPay Insights Mobile App',
+  'Fully secure integrated referenced refunds',
+];
 const EXPIRY_OPTIONS = [
   { id:'7', label:'7 days' },
   { id:'14', label:'14 days' },
@@ -76,6 +89,46 @@ const fmtMoney = (n) => Number.isInteger(n) ? `$${n}` : `$${n.toFixed(2)}`;
 // Unicode-safe base64 helpers for encoding form state into the shareable URL.
 const b64Encode = (str) => btoa(unescape(encodeURIComponent(str)));
 const b64Decode = (str) => decodeURIComponent(escape(atob(str)));
+
+// Splits TTV into standard/AMEX/international volume buckets from Card Mix %s.
+const cardMixSplit = (ttvRaw,cardMix) => {
+  const ttv = parseFloat(ttvRaw)||0;
+  const amexPct = parseFloat(cardMix.amexPct)||0;
+  const intlPct = parseFloat(cardMix.intlPct)||0;
+  const standardPct = Math.max(0,100-amexPct-intlPct);
+  return {
+    standardPct, amexPct, intlPct,
+    standardVolume: ttv*standardPct/100,
+    amexVolume: ttv*amexPct/100,
+    intlVolume: ttv*intlPct/100,
+  };
+};
+// "Primary" rate for the blended-style savings estimate: the blended rate if
+// the selected rate type has one, otherwise the average of debit/credit.
+const primaryRateFor = (rateTypeId,rates) => {
+  const type = RATE_TYPES.find(t=>t.id===rateTypeId);
+  if(!type) return 0;
+  if(type.fields.includes('blended')) return parseFloat(rates.blended?.rate)||0;
+  const d = parseFloat(rates.debit?.rate); const c = parseFloat(rates.credit?.rate);
+  const vals = [d,c].filter(n=>!isNaN(n));
+  return vals.length ? vals.reduce((a,n)=>a+n,0)/vals.length : 0;
+};
+const amexRateFor = (rateTypeId,rates) => {
+  const type = RATE_TYPES.find(t=>t.id===rateTypeId);
+  return type && type.fields.includes('amex') ? (parseFloat(rates.amex?.rate)||0) : 0;
+};
+const intlRateFor = (rateTypeId,rates) => {
+  const type = RATE_TYPES.find(t=>t.id===rateTypeId);
+  return type && type.fields.includes('international') ? (parseFloat(rates.international?.rate)||0) : 0;
+};
+// Estimated processing fees for a given rate type/rates against a TTV split by card mix.
+const estProcessingFees = (rateTypeId,rates,ttvRaw,cardMix) => {
+  const {standardVolume,amexVolume,intlVolume} = cardMixSplit(ttvRaw,cardMix);
+  const std = primaryRateFor(rateTypeId,rates);
+  const amex = amexRateFor(rateTypeId,rates);
+  const intl = intlRateFor(rateTypeId,rates);
+  return standardVolume*std/100 + amexVolume*amex/100 + intlVolume*intl/100;
+};
 
 // ─── Small components ────────────────────────────────────────────────────────
 const inputSt = { width:'100%',padding:'8px 10px',border:'1px solid #d0d0d0',borderRadius:6,fontSize:13,outline:'none',boxSizing:'border-box',fontFamily:'inherit' };
@@ -293,6 +346,227 @@ function PreviewCard({brand,merchant,existing,options,customerLogo,repName,amexD
   );
 }
 
+// ─── New Business Preview Card ──────────────────────────────────────────────
+function NewBusinessPreviewCard({brand,merchant,options,customerLogo,repName,amexDirect,amexQrDataUrl,expiryDays,customNote,markAsDraft,venueNotes,contractTerm,cardMix,competitor}){
+  const b = BRANDS[brand];
+  const optCount = options.length;
+  const opt1 = options[0];
+  const rateTypeObj = id => RATE_TYPES.find(t=>t.id===id);
+  const today = new Date().toLocaleDateString('en-AU',{day:'numeric',month:'long',year:'numeric'});
+  const validUntil = addDays(expiryDays||14);
+  const showComparison = !!competitor?.enabled;
+
+  const RowItem = ({label,value})=>(
+    <div style={{display:'flex',justifyContent:'space-between',alignItems:'baseline',padding:'3px 0',borderBottom:`1px solid ${b.primary}15`,gap:8}}>
+      <span style={{fontSize:9,color:'#555',whiteSpace:'nowrap',flexShrink:0}}>{label}</span>
+      <span style={{fontSize:9,fontWeight:700,color:b.primary,textAlign:'right',flex:'1 1 auto',minWidth:0,wordBreak:'break-word',overflowWrap:'anywhere'}}>{value}</span>
+    </div>
+  );
+  // Single-line discount summary, e.g. "SaaS: FREE" / "SaaS: $49.00/mo (50% off)".
+  const discountLine = (label,rrpNum,discPctRaw) => {
+    if(isNaN(rrpNum)) return null;
+    const discNum = parseFloat(discPctRaw);
+    const hasDisc = !isNaN(discNum) && discNum>0;
+    const final = hasDisc ? rrpNum-rrpNum*(discNum/100) : rrpNum;
+    if(hasDisc && discNum>=100) return `${label}: FREE`;
+    return hasDisc ? `${label}: ${fmtMoney(final)}/mo (${discNum}% off)` : `${label}: ${fmtMoney(rrpNum)}/mo`;
+  };
+  const terminalLine = (opt) => {
+    const count = parseFloat(opt.terminalCount);
+    const discPct = parseFloat(opt.terminalDiscount)||0;
+    if(isNaN(count) || count<=0 || discPct<=0) return null;
+    const full = count*TERMINAL_MONTHLY_COST;
+    return `${discPct}% off terminal rental (${count} × ${fmtMoney(TERMINAL_MONTHLY_COST)} p/m = ${fmtMoney(full)} p/m)`;
+  };
+
+  const lineSt = {fontSize:9,fontWeight:700,color:b.primary,padding:'3px 0',borderBottom:`1px solid ${b.primary}15`};
+
+  const OptionCard = ({opt,idx})=>{
+    const type = rateTypeObj(opt.rateType); if(!type) return null;
+    const primaryKey = type.fields.includes('blended') ? 'blended' : type.fields[0];
+    const secondaryKeys = type.fields.filter(f=>f!==primaryKey && !(f==='amex'&&amexDirect));
+    const primaryCur = opt.rates[primaryKey]||{};
+    const primaryIsAmexLocked = primaryKey==='amex' && amexDirect;
+    const tLine = terminalLine(opt);
+    const sLine = (opt.saasDiscount||opt.saasAmount) ? discountLine('SaaS',parseFloat(opt.saasAmount),opt.saasDiscount) : null;
+    const aLine = (opt.advantageDiscount||opt.advantageAmount) ? discountLine('Advantage+',parseFloat(opt.advantageAmount),opt.advantageDiscount) : null;
+    return(
+      <div style={{flex:1,minWidth:0,border:`1.5px solid ${b.primary}25`,borderRadius:10,padding:'14px 16px'}}>
+        <div style={{fontSize:10,fontWeight:800,color:b.primary,textTransform:'uppercase',letterSpacing:1,textAlign:'center',paddingBottom:8,borderBottom:`1.5px solid ${b.primary}25`,marginBottom:8}}>
+          {optCount===1?'Your Offer':`Option ${idx+1}`}
+        </div>
+        <div style={{textAlign:'center',margin:'4px 0 10px'}}>
+          {primaryIsAmexLocked?(
+            <><div style={{fontSize:28,fontWeight:900,color:b.primary,lineHeight:1}}>Direct</div>
+            <div style={{fontSize:9,color:'#999',marginTop:4,textTransform:'uppercase',letterSpacing:1}}>AMEX Rate (Direct)</div></>
+          ):(
+            <><div style={{fontSize:32,fontWeight:900,color:b.primary,lineHeight:1}}>{fmt(primaryCur.rate)}</div>
+            <div style={{fontSize:9,color:'#999',marginTop:4,textTransform:'uppercase',letterSpacing:1}}>{RATE_LABELS[primaryKey]}</div></>
+          )}
+        </div>
+        {secondaryKeys.map(f=>{
+          const cur = opt.rates[f]||{};
+          return <RowItem key={f} label={rateLabel(f,amexDirect)} value={fmtRateFee(cur.rate,cur.fee)}/>;
+        })}
+        {tLine&&<div style={lineSt}>{tLine}</div>}
+        {sLine&&<div style={lineSt}>{sLine}</div>}
+        {aLine&&<div style={lineSt}>{aLine}</div>}
+      </div>
+    );
+  };
+
+  const FeaturesGrid = () => (
+    <div style={{margin:'14px 28px 0'}}>
+      <div style={{fontSize:10,fontWeight:800,color:b.primary,textTransform:'uppercase',letterSpacing:1,textAlign:'center',marginBottom:10}}>
+        What&apos;s included with every OolioPay x OrderMate merchant
+      </div>
+      <div style={{display:'grid',gridTemplateColumns:'repeat(3, 1fr)',gap:10}}>
+        {FEATURES_GRID.map((f,i)=>(
+          <div key={i} style={{display:'flex',alignItems:'flex-start',gap:6,background:b.primary+'0a',borderRadius:8,padding:'8px 10px'}}>
+            <span style={{color:b.primary,fontSize:11,fontWeight:800,flexShrink:0,lineHeight:1.4}}>✓</span>
+            <span style={{fontSize:8,color:'#555',lineHeight:1.4}}>{f}</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+
+  // ─── Mode B: savings comparison (Option 1 vs competitor) ──────────────────
+  const SavingsComparison = () => {
+    if(!opt1) return null;
+    const compProcessing = estProcessingFees(competitor.rateType,competitor.rates,merchant.ttv,cardMix);
+    const compTermCount = parseFloat(competitor.terminalCount);
+    const compTermCost = parseFloat(competitor.terminalMonthlyCost);
+    const compTerminal = (!isNaN(compTermCount)&&compTermCount>0&&!isNaN(compTermCost)&&compTermCost>0) ? compTermCount*compTermCost : null;
+    const anySaas = options.some(o=>o.saasDiscount||o.saasAmount);
+    const compSaas = (anySaas && competitor.saasFee!=='') ? parseFloat(competitor.saasFee) : null;
+    const currentLines = [
+      {label:'Processing fees',value:compProcessing},
+      ...(compTerminal!=null?[{label:'Terminal rental',value:compTerminal}]:[]),
+      ...(compSaas!=null && !isNaN(compSaas)?[{label:'OrderMate SaaS',value:compSaas}]:[]),
+    ];
+    const currentTotal = currentLines.reduce((a,l)=>a+l.value,0);
+
+    const oolioProcessing = estProcessingFees(opt1.rateType,opt1.rates,merchant.ttv,cardMix);
+    const oolioCount = parseFloat(opt1.terminalCount);
+    const oolioDiscPct = parseFloat(opt1.terminalDiscount)||0;
+    let terminalLabelValue = null, terminalFree = false;
+    if(!isNaN(oolioCount) && oolioCount>0){
+      const full = oolioCount*TERMINAL_MONTHLY_COST;
+      if(oolioDiscPct>=100){ terminalFree = true; terminalLabelValue = 0; }
+      else terminalLabelValue = full-full*(oolioDiscPct/100);
+    }
+    const oolioSaas = (opt1.saasDiscount||opt1.saasAmount) ? (()=>{
+      const rrp = parseFloat(opt1.saasAmount); if(isNaN(rrp)) return null;
+      const disc = parseFloat(opt1.saasDiscount)||0;
+      return rrp-rrp*(disc/100);
+    })() : null;
+    const oolioAdv = (opt1.advantageDiscount||opt1.advantageAmount) ? (()=>{
+      const rrp = parseFloat(opt1.advantageAmount); if(isNaN(rrp)) return null;
+      const disc = parseFloat(opt1.advantageDiscount)||0;
+      return rrp-rrp*(disc/100);
+    })() : null;
+    const oolioLines = [
+      {label:'Processing fees',value:oolioProcessing},
+      ...(terminalLabelValue!=null?[{label:'Terminal rental',value:terminalLabelValue,free:terminalFree}]:[]),
+      ...(oolioSaas!=null?[{label:'OrderMate SaaS',value:oolioSaas}]:[]),
+      ...(oolioAdv!=null?[{label:'Advantage+',value:oolioAdv}]:[]),
+    ];
+    const oolioTotal = oolioLines.reduce((a,l)=>a+l.value,0);
+    const saving = currentTotal-oolioTotal;
+
+    const Col = ({title,lines,total,muted}) => (
+      <div style={{flex:1,minWidth:0}}>
+        <div style={{fontSize:9,fontWeight:800,color:muted?'#999':b.primary,textTransform:'uppercase',letterSpacing:1,paddingBottom:4,borderBottom:`1.5px solid ${muted?'#ddd':b.primary+'30'}`,marginBottom:4}}>{title}</div>
+        {lines.map((l,i)=>(
+          <div key={i} style={{display:'flex',justifyContent:'space-between',fontSize:9,color:muted?'#888':'#555',padding:'3px 0'}}>
+            <span>{l.label}</span><span style={{fontWeight:700,color:muted?'#888':b.primary}}>{l.free?'FREE':`${fmtMoney(l.value)} p/m`}</span>
+          </div>
+        ))}
+        <div style={{display:'flex',justifyContent:'space-between',fontSize:10,fontWeight:800,color:muted?'#777':b.primary,paddingTop:6,marginTop:4,borderTop:`1.5px solid ${muted?'#ddd':b.primary+'30'}`}}>
+          <span>Total {muted?'current':'with OolioPay'} cost</span><span>{fmtMoney(total)} p/m</span>
+        </div>
+      </div>
+    );
+
+    return(
+      <div style={{margin:'16px 28px 0'}}>
+        <div style={{fontSize:10,fontWeight:800,color:b.primary,textTransform:'uppercase',letterSpacing:1,textAlign:'center',marginBottom:10}}>Estimated Monthly Cost Comparison</div>
+        <div style={{display:'flex',gap:16}}>
+          <Col title="Current Setup" lines={currentLines} total={currentTotal} muted/>
+          <Col title="With OolioPay" lines={oolioLines} total={oolioTotal}/>
+        </div>
+        <div style={{textAlign:'center',marginTop:14,padding:'10px 0',borderTop:`1px dashed ${b.primary}30`}}>
+          <div style={{fontSize:16,fontWeight:900,color:b.primary}}>Estimated monthly saving: {fmtMoney(saving)}</div>
+          <div style={{fontSize:8,fontStyle:'italic',color:'#999',marginTop:4}}>Estimated figures based on provided monthly transaction volume of {fmtDollar(merchant.ttv)} and indicative card mix. Actual costs may vary.</div>
+        </div>
+      </div>
+    );
+  };
+
+  return(
+    <div id="proposal-output" style={{width:680,background:'#fff',borderRadius:14,overflow:'hidden',fontFamily:'Inter, sans-serif',boxShadow:'0 4px 32px rgba(0,0,0,0.08)',position:'relative'}}>
+      {markAsDraft&&(
+        <div style={{position:'absolute',inset:0,display:'flex',alignItems:'center',justifyContent:'center',pointerEvents:'none',zIndex:5,overflow:'hidden'}}>
+          <div style={{fontSize:80,fontWeight:900,color:b.primary,opacity:0.15,transform:'rotate(-30deg)',letterSpacing:10,whiteSpace:'nowrap'}}>DRAFT</div>
+        </div>
+      )}
+      {/* Header */}
+      <div style={{background:b.gradient,padding:'20px 28px 16px'}}>
+        <div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}>
+          <div style={{display:'flex',alignItems:'center',gap:12}}>
+            {customerLogo?(<img src={customerLogo} alt="" style={{maxHeight:36,maxWidth:120,objectFit:'contain'}}/>):(<div style={{color:'#fff',fontSize:16,fontWeight:800}}>{merchant.name||'Merchant Name'}</div>)}
+            <div style={{width:1,height:28,background:'rgba(255,255,255,0.25)'}}/>
+            <img src={b.logo} alt={b.name} style={{height:18,objectFit:'contain'}}/>
+          </div>
+          <div style={{textAlign:'right',display:'flex',flexDirection:'column',alignItems:'flex-end',gap:3}}>
+            <div style={{color:'rgba(255,255,255,0.5)',fontSize:7,textTransform:'uppercase',letterSpacing:1.5,fontWeight:600}}>Powered by</div>
+            <OolioPayLogo size={22} fill="#fff"/>
+            {repName?<div style={{color:'rgba(255,255,255,0.6)',fontSize:7,marginTop:2}}>Prepared by {repName} · {today} · Valid until {validUntil}</div>:<div style={{color:'rgba(255,255,255,0.5)',fontSize:7,marginTop:1}}>{today} · Valid until {validUntil}</div>}
+          </div>
+        </div>
+        {venueNotes&&<div style={{color:'rgba(255,255,255,0.7)',fontSize:8,marginTop:6}}>{merchant.name||'Merchant Name'} · {venueNotes}</div>}
+      </div>
+
+      {customNote&&customNote.trim()&&(
+        <div style={{margin:'10px 28px 0',padding:'8px 12px',background:b.primary+'10',borderLeft:`3px solid ${b.primary}`,borderRadius:4}}>
+          <div style={{fontSize:9,fontStyle:'italic',color:b.primary,opacity:0.85,lineHeight:1.5}}>&ldquo;{customNote}&rdquo;</div>
+        </div>
+      )}
+
+      {/* Rate card(s) */}
+      <div style={{padding:'14px 28px 0',display:'flex',gap:14,justifyContent:optCount===1?'center':'stretch'}}>
+        {optCount===1?(<div style={{width:'70%'}}><OptionCard opt={options[0]} idx={0}/></div>):options.map((opt,i)=><OptionCard key={i} opt={opt} idx={i}/>)}
+      </div>
+
+      <FeaturesGrid/>
+      {showComparison&&<SavingsComparison/>}
+
+      {/* Footer */}
+      <div style={{background:'#f7f7f8',padding:'14px 28px 16px',borderTop:'1px solid #eee',marginTop:14}}>
+        <img src={TERMINAL_IMG} alt="" style={{float:'right',width:100,objectFit:'contain',marginLeft:14,marginTop:-4}}/>
+        <div style={{fontSize:8,color:b.primary,fontWeight:600,letterSpacing:0.3,opacity:0.6,marginBottom:4}}>All rates and fees shown are exclusive of GST.</div>
+        {contractTerm&&(
+          <div style={{fontSize:8,color:b.primary,opacity:0.7,marginBottom:4}}>Contract Term: {CONTRACT_TERMS.find(t=>t.id===contractTerm)?.label}</div>
+        )}
+        {amexDirect&&(
+          <div style={{display:'flex',alignItems:'center',gap:6,marginBottom:4}}>
+            <div style={{fontSize:8,color:'#aaa',lineHeight:1.5,flex:1}}>
+              <strong style={{color:b.primary,opacity:0.8}}>AMEX Merchant Facility:</strong> This proposal assumes the Merchant will obtain their own American Express Merchant Account. Upon approval, the account will be configured for acceptance via the supplied Oolio payment terminals. Scan to apply:
+            </div>
+            {amexQrDataUrl&&(
+              <img id="amex-qr-img" src={amexQrDataUrl} alt="Scan to apply for an AMEX Merchant Account" style={{width:24,height:24,flexShrink:0,border:'1px solid #eee',borderRadius:2}}/>
+            )}
+          </div>
+        )}
+        <div style={{fontSize:8,color:'#aaa',lineHeight:1.5}}>
+          All rates and fees shown are exclusive of GST. Figures shown are indicative estimates only based on provided transaction volumes. This proposal is indicative only and subject to formal agreement.{amexDirect?' American Express merchant fees are billed directly by American Express and are not included in the rates outlined in this proposal.':''}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ─── Main App ────────────────────────────────────────────────────────────────
 export default function ProposalTool(){
   const [brand,setBrand]=useState('oolio');
@@ -321,10 +595,31 @@ export default function ProposalTool(){
   const urlSyncTimerRef=useRef(null);
   const b=BRANDS[brand];
 
+  // ─── New Business (OrderMate Customer) tab — fully isolated form state ──
+  const [activeTab,setActiveTab]=useState('recontract');
+  const [nbMerchant,setNbMerchant]=useState({name:'',ttv:''});
+  const [nbCustomerLogo,setNbCustomerLogo]=useState(null);
+  const [nbOptions,setNbOptions]=useState([emptyOption()]);
+  const [nbRepName,setNbRepName]=useState('');
+  const [nbAmexDirect,setNbAmexDirect]=useState(false);
+  const [nbAmexQrDataUrl,setNbAmexQrDataUrl]=useState(null);
+  const [nbAmexLinkCopied,setNbAmexLinkCopied]=useState(false);
+  const [nbExpiryDays,setNbExpiryDays]=useState('14');
+  const [nbCustomNote,setNbCustomNote]=useState('');
+  const [nbMarkAsDraft,setNbMarkAsDraft]=useState(false);
+  const [nbVenueNotes,setNbVenueNotes]=useState('');
+  const [nbContractTerm,setNbContractTerm]=useState('');
+  const [cardMix,setCardMix]=useState(emptyCardMix());
+  const [competitor,setCompetitor]=useState(emptyCompetitor());
+
   const collectState=useCallback(()=>({
     brand,merchant,existing,options,repName,amexDirect,
     expiryDays,customNote,markAsDraft,venueNotes,contractTerm,
-  }),[brand,merchant,existing,options,repName,amexDirect,expiryDays,customNote,markAsDraft,venueNotes,contractTerm]);
+    activeTab,nbMerchant,nbOptions,nbRepName,nbAmexDirect,
+    nbExpiryDays,nbCustomNote,nbMarkAsDraft,nbVenueNotes,nbContractTerm,
+    cardMix,competitor,
+  }),[brand,merchant,existing,options,repName,amexDirect,expiryDays,customNote,markAsDraft,venueNotes,contractTerm,
+      activeTab,nbMerchant,nbOptions,nbRepName,nbAmexDirect,nbExpiryDays,nbCustomNote,nbMarkAsDraft,nbVenueNotes,nbContractTerm,cardMix,competitor]);
 
   const applyState=useCallback((s)=>{
     if(!s)return;
@@ -340,6 +635,19 @@ export default function ProposalTool(){
     if(typeof s.venueNotes==='string')setVenueNotes(s.venueNotes);
     if(typeof s.contractTerm==='string')setContractTerm(s.contractTerm);
     if(typeof s.customerLogo==='string'||s.customerLogo===null)setCustomerLogo(s.customerLogo??null);
+    if(s.activeTab==='recontract'||s.activeTab==='newbusiness')setActiveTab(s.activeTab);
+    if(s.nbMerchant)setNbMerchant(s.nbMerchant);
+    if(s.nbOptions)setNbOptions(s.nbOptions);
+    if(typeof s.nbRepName==='string')setNbRepName(s.nbRepName);
+    if(typeof s.nbAmexDirect==='boolean')setNbAmexDirect(s.nbAmexDirect);
+    if(s.nbExpiryDays)setNbExpiryDays(s.nbExpiryDays);
+    if(typeof s.nbCustomNote==='string')setNbCustomNote(s.nbCustomNote);
+    if(typeof s.nbMarkAsDraft==='boolean')setNbMarkAsDraft(s.nbMarkAsDraft);
+    if(typeof s.nbVenueNotes==='string')setNbVenueNotes(s.nbVenueNotes);
+    if(typeof s.nbContractTerm==='string')setNbContractTerm(s.nbContractTerm);
+    if(s.cardMix)setCardMix(s.cardMix);
+    if(s.competitor)setCompetitor(s.competitor);
+    if(typeof s.nbCustomerLogo==='string'||s.nbCustomerLogo===null)setNbCustomerLogo(s.nbCustomerLogo??null);
   },[]);
 
   // Clearing on toggle-on: a rep flipping this after already entering an AMEX
@@ -370,6 +678,52 @@ export default function ProposalTool(){
       terminalCount:existing.terminalCount,
     });
   };
+
+  // ─── New Business tab handlers (mirror the recontracting handlers above,
+  // operating on the isolated nb* state instead) ──────────────────────────
+  const handleNbAmexDirectChange=useCallback((checked)=>{
+    setNbAmexDirect(checked);
+    if(checked){
+      const clearAmex=(rates)=>({...rates,amex:{rate:'',fee:''}});
+      setNbOptions(prev=>prev.map(o=>({...o,rates:clearAmex(o.rates),ecomRates:clearAmex(o.ecomRates)})));
+    }
+  },[]);
+
+  const handleNbLogoUpload=e=>{const file=e.target.files[0];if(!file)return;const reader=new FileReader();reader.onload=ev=>setNbCustomerLogo(ev.target.result);reader.readAsDataURL(file);};
+  const addNbOption=()=>{if(nbOptions.length<3)setNbOptions([...nbOptions,emptyOption()]);};
+  const removeNbOption=i=>{if(nbOptions.length>1)setNbOptions(nbOptions.filter((_,j)=>j!==i));};
+  const updateNbOption=(i,data)=>setNbOptions(nbOptions.map((o,j)=>j===i?data:o));
+
+  // Only pulls known facts (SaaS/Advantage+ amounts, terminal count) from
+  // Option 1 — rate type, rates, and every discount % are left for the rep
+  // to set fresh on each option.
+  const copyFromOption1=(i)=>{
+    updateNbOption(i,{
+      ...nbOptions[i],
+      saasAmount:nbOptions[0].saasAmount,
+      advantageAmount:nbOptions[0].advantageAmount,
+      terminalCount:nbOptions[0].terminalCount,
+    });
+  };
+
+  useEffect(()=>{
+    if(!nbAmexDirect){setNbAmexQrDataUrl(null);return;}
+    let cancelled=false;
+    (async()=>{
+      const QRCode=await import('qrcode');
+      const dataUrl=await QRCode.toDataURL(AMEX_APPLY_URL,{margin:1,width:240});
+      if(!cancelled)setNbAmexQrDataUrl(dataUrl);
+    })();
+    return()=>{cancelled=true;};
+  },[nbAmexDirect]);
+
+  const copyAmexLinkNb=useCallback(async()=>{
+    try{
+      await navigator.clipboard.writeText(AMEX_APPLY_URL);
+      setNbAmexLinkCopied(true);
+      setTimeout(()=>setNbAmexLinkCopied(false),2000);
+    }catch(err){console.error('Copy failed:',err);alert('Could not copy link. Check console.');}
+  },[]);
 
   useEffect(()=>{
     if(!amexDirect){setAmexQrDataUrl(null);return;}
@@ -423,7 +777,7 @@ export default function ProposalTool(){
   useEffect(()=>{
     if(!hydrated)return;
     try{
-      localStorage.setItem(DRAFT_KEY,JSON.stringify({...collectState(),customerLogo}));
+      localStorage.setItem(DRAFT_KEY,JSON.stringify({...collectState(),customerLogo,nbCustomerLogo}));
     }catch(err){console.error('Failed to save draft:',err);}
     if(firstSaveRef.current){
       firstSaveRef.current=false;
@@ -432,7 +786,7 @@ export default function ProposalTool(){
     setDraftSavedVisible(true);
     const t=setTimeout(()=>setDraftSavedVisible(false),2000);
     return()=>clearTimeout(t);
-  },[hydrated,collectState,customerLogo]);
+  },[hydrated,collectState,customerLogo,nbCustomerLogo]);
 
   // Mirror state into the URL (debounced, logo excluded — it would make the link
   // impractically long) so the "Copy Link" button always has something fresh to share.
@@ -473,6 +827,10 @@ export default function ProposalTool(){
     setBrand('oolio');setMerchant({name:'',ttv:''});setCustomerLogo(null);
     setExisting(emptyExisting());setOptions([emptyOption()]);setRepName('');
     setAmexDirect(false);setExpiryDays('14');setCustomNote('');setMarkAsDraft(false);setVenueNotes('');setContractTerm('');
+    setActiveTab('recontract');setNbMerchant({name:'',ttv:''});setNbCustomerLogo(null);
+    setNbOptions([emptyOption()]);setNbRepName('');setNbAmexDirect(false);setNbExpiryDays('14');
+    setNbCustomNote('');setNbMarkAsDraft(false);setNbVenueNotes('');setNbContractTerm('');
+    setCardMix(emptyCardMix());setCompetitor(emptyCompetitor());
   },[]);
 
   const dismissBanner=useCallback(()=>{
@@ -486,10 +844,11 @@ export default function ProposalTool(){
     try{
       const snapshot={
         id:Date.now()+'-'+Math.random().toString(36).slice(2),
-        merchantName:merchant.name||'Untitled',
+        merchantName:(activeTab==='recontract'?merchant.name:nbMerchant.name)||'Untitled',
         brand,
+        proposalType:activeTab,
         date:new Date().toISOString(),
-        state:{...collectState(),customerLogo},
+        state:{...collectState(),customerLogo,nbCustomerLogo},
       };
       setRecentProposals(prev=>{
         const next=[snapshot,...prev].slice(0,MAX_RECENT);
@@ -497,7 +856,7 @@ export default function ProposalTool(){
         return next;
       });
     }catch(err){console.error('Failed to snapshot recent proposal:',err);}
-  },[merchant.name,brand,collectState,customerLogo]);
+  },[activeTab,merchant.name,nbMerchant.name,brand,collectState,customerLogo,nbCustomerLogo]);
 
   const restoreRecent=useCallback((id)=>{
     const item=recentProposals.find(r=>r.id===id);
@@ -526,8 +885,9 @@ export default function ProposalTool(){
       const{toPng}=await import('html-to-image');
       const dataUrl=await toPng(el,{pixelRatio:3,cacheBust:true,style:{transform:'scale(1)',transformOrigin:'top left'}});
       saveRecentProposal();
+      const activeMerchantName=activeTab==='recontract'?merchant.name:nbMerchant.name;
       if(format==='png'){
-        const link=document.createElement('a');link.download=`${merchant.name||'proposal'}_${b.name}_pay_proposal.png`;link.href=dataUrl;link.click();
+        const link=document.createElement('a');link.download=`${activeMerchantName||'proposal'}_${b.name}_pay_proposal.png`;link.href=dataUrl;link.click();
         setRenderedPng(dataUrl);
       }else if(format==='render'){
         setRenderedPng(dataUrl);
@@ -553,11 +913,11 @@ export default function ProposalTool(){
             {url:AMEX_APPLY_URL}
           );
         }
-        doc.save(`${merchant.name||'proposal'}_${b.name}_pay_proposal.pdf`);
+        doc.save(`${activeMerchantName||'proposal'}_${b.name}_pay_proposal.pdf`);
       }
     }catch(err){console.error('Export failed:',err);alert('Export failed. Check console.');}
     finally{setExporting(false);}
-  },[merchant.name,b.name,saveRecentProposal]);
+  },[activeTab,merchant.name,nbMerchant.name,b.name,saveRecentProposal]);
 
   const sectionTitle=br=>({fontSize:13,fontWeight:700,color:br.primary,textTransform:'uppercase',letterSpacing:1,marginBottom:10,paddingBottom:6,borderBottom:`2px solid ${br.primary}20`});
 
@@ -584,6 +944,16 @@ export default function ProposalTool(){
         </div>
       </div>
 
+      {/* Tab Switcher */}
+      <div style={{display:'flex',gap:10,padding:'16px 24px 0',maxWidth:1400,margin:'0 auto'}}>
+        <button onClick={()=>setActiveTab('recontract')} style={{padding:'8px 18px',borderRadius:20,border:activeTab==='recontract'?`2px solid ${b.primary}`:'2px solid #ddd',background:activeTab==='recontract'?b.primary:'transparent',color:activeTab==='recontract'?'#fff':'#888',fontWeight:700,fontSize:12,cursor:'pointer',fontFamily:'inherit'}}>
+          Recontracting (Existing Merchant)
+        </button>
+        <button onClick={()=>setActiveTab('newbusiness')} style={{padding:'8px 18px',borderRadius:20,border:activeTab==='newbusiness'?`2px solid ${b.primary}`:'2px solid #ddd',background:activeTab==='newbusiness'?b.primary:'transparent',color:activeTab==='newbusiness'?'#fff':'#888',fontWeight:700,fontSize:12,cursor:'pointer',fontFamily:'inherit'}}>
+          New OolioPay Merchant (OrderMate Customer)
+        </button>
+      </div>
+
       {/* Content */}
       <div style={{display:'flex',gap:24,padding:24,maxWidth:1400,margin:'0 auto'}}>
         {/* Left Panel */}
@@ -593,12 +963,13 @@ export default function ProposalTool(){
               <div style={sectionTitle(b)}>Recent Proposals ({recentProposals.length})</div>
               {recentProposals.map(r=>(
                 <div key={r.id} onClick={()=>restoreRecent(r.id)} style={{display:'flex',justifyContent:'space-between',alignItems:'center',gap:8,padding:'7px 8px',borderRadius:6,cursor:'pointer',fontSize:12,color:'#555',background:'#f7f7f8',marginBottom:6}}>
-                  <span style={{overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{r.merchantName} · {BRANDS[r.brand]?.name||r.brand} · {new Date(r.date).toLocaleDateString('en-AU',{day:'numeric',month:'short'})}</span>
+                  <span style={{overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{r.merchantName} · {BRANDS[r.brand]?.name||r.brand}{r.proposalType==='newbusiness'?' · New Business':''} · {new Date(r.date).toLocaleDateString('en-AU',{day:'numeric',month:'short'})}</span>
                   <button onClick={e=>{e.stopPropagation();removeRecent(r.id);}} style={{flexShrink:0,background:'none',border:'none',color:'#c00',cursor:'pointer',fontSize:14,fontWeight:700,lineHeight:1,padding:'0 2px'}}>×</button>
                 </div>
               ))}
             </div>
           )}
+          {activeTab==='recontract' && (<>
           <div style={{background:'#fff',borderRadius:12,padding:18,marginBottom:16,boxShadow:'0 1px 6px rgba(0,0,0,0.06)'}}>
             <div style={sectionTitle(b)}>Merchant Info</div>
             <Field label="Merchant / Venue Name" value={merchant.name} onChange={v=>setMerchant({...merchant,name:v})} placeholder="e.g. The Local Pub"/>
@@ -657,6 +1028,86 @@ export default function ProposalTool(){
               + Add Option {options.length+1}
             </button>
           )}
+          </>)}
+
+          {activeTab==='newbusiness' && (<>
+          <div style={{background:'#fff',borderRadius:12,padding:18,marginBottom:16,boxShadow:'0 1px 6px rgba(0,0,0,0.06)'}}>
+            <div style={sectionTitle(b)}>Merchant Info</div>
+            <Field label="Merchant / Venue Name" value={nbMerchant.name} onChange={v=>setNbMerchant({...nbMerchant,name:v})} placeholder="e.g. The Local Pub"/>
+            <Field label="Monthly TTV ($)" value={nbMerchant.ttv} onChange={v=>setNbMerchant({...nbMerchant,ttv:v})} placeholder="300000" suffix="$" warning={!nbMerchant.ttv?'TTV required for T&Cs':null}/>
+            <Field label="Venues (optional)" value={nbVenueNotes} onChange={setNbVenueNotes} placeholder="e.g. 3 venues — Sydney CBD, Parramatta, Bondi"/>
+            <Field label="Prepared By" value={nbRepName} onChange={setNbRepName} placeholder="e.g. Olivia Mayes"/>
+            <Select label="Proposal Valid For" value={nbExpiryDays} onChange={setNbExpiryDays} options={EXPIRY_OPTIONS}/>
+            <Select label="Contract Term" value={nbContractTerm} onChange={setNbContractTerm} options={CONTRACT_TERMS}/>
+            <TextAreaField label="Personal Note (optional)" value={nbCustomNote} onChange={setNbCustomNote} placeholder="e.g. Great speaking with you today, Sarah — as discussed..."/>
+            <div style={{marginBottom:8}}><label style={labelSt}>Customer Logo (optional)</label>
+              <input type="file" accept="image/*" onChange={handleNbLogoUpload} style={{fontSize:12}}/>
+              <div style={{fontSize:10,color:'#999',marginTop:4}}>For best results, use a logo with a transparent background (PNG).</div>
+              {nbCustomerLogo&&<button onClick={()=>setNbCustomerLogo(null)} style={{fontSize:11,color:b.primary,background:'none',border:'none',cursor:'pointer',marginTop:4}}>Remove logo</button>}
+            </div>
+            <Checkbox label="Mark as Draft" checked={nbMarkAsDraft} onChange={setNbMarkAsDraft}/>
+          </div>
+
+          <div style={{background:'#fff',borderRadius:12,padding:18,marginBottom:16,boxShadow:'0 1px 6px rgba(0,0,0,0.06)'}}>
+            <div style={sectionTitle(b)}>Proposal Options</div>
+            <Checkbox label="AMEX Direct (merchant sets up own account)" checked={nbAmexDirect} onChange={handleNbAmexDirectChange}/>
+          </div>
+
+          <div style={{background:'#fff',borderRadius:12,padding:18,marginBottom:16,boxShadow:'0 1px 6px rgba(0,0,0,0.06)'}}>
+            <div style={sectionTitle(b)}>Card Mix</div>
+            <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:'0 12px'}}>
+              <Field label="AMEX %" value={cardMix.amexPct} onChange={v=>setCardMix({...cardMix,amexPct:v})} placeholder="0" suffix="%"/>
+              <Field label="International %" value={cardMix.intlPct} onChange={v=>setCardMix({...cardMix,intlPct:v})} placeholder="0" suffix="%"/>
+            </div>
+            <Field label="Standard %" value={String(Math.max(0,100-(parseFloat(cardMix.amexPct)||0)-(parseFloat(cardMix.intlPct)||0)))} onChange={()=>{}} disabled suffix="%"/>
+            <div style={noteSt}>Used for estimated savings calculation only</div>
+          </div>
+
+          <div style={{background:'#fff',borderRadius:12,padding:18,marginBottom:16,boxShadow:'0 1px 6px rgba(0,0,0,0.06)'}}>
+            <div style={sectionTitle(b)}>Competitor Details</div>
+            <Checkbox label="Include competitor comparison" checked={competitor.enabled} onChange={v=>setCompetitor({...competitor,enabled:v})}/>
+            {competitor.enabled&&(<>
+              <Field label="Provider Name" value={competitor.providerName} onChange={v=>setCompetitor({...competitor,providerName:v})} placeholder="e.g. Tyro, Zeller, Square"/>
+              <Select label="Rate Type" value={competitor.rateType} onChange={v=>setCompetitor({...competitor,rateType:v})} options={RATE_TYPES}/>
+              <RateFields rateType={competitor.rateType} rates={competitor.rates} onChange={r=>setCompetitor({...competitor,rates:r})} amexDirect={nbAmexDirect} isExisting/>
+              <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:'0 12px'}}>
+                <Field label="No. of Terminals" value={competitor.terminalCount} onChange={v=>setCompetitor({...competitor,terminalCount:v})} placeholder="0"/>
+                <Field label="$ per terminal per month" value={competitor.terminalMonthlyCost} onChange={v=>setCompetitor({...competitor,terminalMonthlyCost:v})} placeholder="0.00" suffix="$"/>
+              </div>
+              {nbOptions.some(o=>o.saasDiscount||o.saasAmount)&&(
+                <Field label="Current OrderMate SaaS fee ($)" value={competitor.saasFee} onChange={v=>setCompetitor({...competitor,saasFee:v})} placeholder="0.00" suffix="$"/>
+              )}
+              <TextAreaField label="Competitor Inclusions" value={competitor.inclusions} onChange={v=>setCompetitor({...competitor,inclusions:v})} placeholder="e.g. No weekend settlements, no MOTO, no pay@table"/>
+            </>)}
+          </div>
+
+          {nbOptions.map((opt,i)=>(
+            <div key={i} style={{background:'#fff',borderRadius:12,padding:18,marginBottom:16,boxShadow:'0 1px 6px rgba(0,0,0,0.06)',borderLeft:`4px solid ${b.primary}`}}>
+              <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',...sectionTitle(b)}}>
+                <span>{nbOptions.length===1?'New Offer':`New Option ${i+1}`}</span>
+                {nbOptions.length>1&&<button onClick={()=>removeNbOption(i)} style={{fontSize:11,color:'#c00',background:'none',border:'none',cursor:'pointer'}}>Remove</button>}
+              </div>
+              {i>0&&(
+                <button onClick={()=>copyFromOption1(i)} style={{width:'100%',fontSize:11,color:b.primary,background:'none',border:`1px dashed ${b.primary}`,borderRadius:6,padding:'6px 10px',cursor:'pointer',fontFamily:'inherit',marginBottom:10}}>
+                  Copy from Option 1 →
+                </button>
+              )}
+              <Select label="In-Store Rate Type" value={opt.rateType} onChange={v=>updateNbOption(i,{...opt,rateType:v})} options={RATE_TYPES}/>
+              <RateFields rateType={opt.rateType} rates={opt.rates} onChange={r=>updateNbOption(i,{...opt,rates:r})} amexDirect={nbAmexDirect}/>
+              <Checkbox label="Add E-Commerce Rates" checked={opt.hasEcom} onChange={v=>updateNbOption(i,{...opt,hasEcom:v})}/>
+              {opt.hasEcom&&(<>
+                <Select label="E-Commerce Rate Type" value={opt.ecomRateType} onChange={v=>updateNbOption(i,{...opt,ecomRateType:v})} options={RATE_TYPES}/>
+                <RateFields rateType={opt.ecomRateType} rates={opt.ecomRates} onChange={r=>updateNbOption(i,{...opt,ecomRates:r})} amexDirect={nbAmexDirect}/>
+              </>)}
+              <div style={{marginTop:8}}><SubsidyFields data={opt} onChange={d=>updateNbOption(i,d)} brandColor={b.primary}/></div>
+            </div>
+          ))}
+          {nbOptions.length<3&&(
+            <button onClick={addNbOption} style={{width:'100%',padding:10,borderRadius:10,border:`2px dashed ${b.primary}40`,background:'transparent',color:b.primary,fontWeight:700,fontSize:13,cursor:'pointer',fontFamily:'inherit',marginBottom:16}}>
+              + Add Option {nbOptions.length+1}
+            </button>
+          )}
+          </>)}
         </div>
 
         {/* Right Panel */}
@@ -664,9 +1115,9 @@ export default function ProposalTool(){
           <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:12}}>
             <div style={{fontSize:11,fontWeight:700,color:'#999',textTransform:'uppercase',letterSpacing:1.5}}>Live Preview</div>
             <div style={{display:'flex',gap:8}}>
-              {amexDirect&&(
-                <button onClick={copyAmexLink} style={{padding:'7px 14px',borderRadius:8,border:`1.5px solid ${b.primary}40`,background:'#fff',color:b.primary,fontWeight:600,fontSize:11,cursor:'pointer',fontFamily:'inherit'}}>
-                  {amexLinkCopied?'✓ Copied':'🔗 Copy AMEX Link'}
+              {(activeTab==='recontract'?amexDirect:nbAmexDirect)&&(
+                <button onClick={activeTab==='recontract'?copyAmexLink:copyAmexLinkNb} style={{padding:'7px 14px',borderRadius:8,border:`1.5px solid ${b.primary}40`,background:'#fff',color:b.primary,fontWeight:600,fontSize:11,cursor:'pointer',fontFamily:'inherit'}}>
+                  {(activeTab==='recontract'?amexLinkCopied:nbAmexLinkCopied)?'✓ Copied':'🔗 Copy AMEX Link'}
                 </button>
               )}
               <button onClick={copyLink} style={{padding:'7px 14px',borderRadius:8,border:`1.5px solid ${b.primary}40`,background:'#fff',color:b.primary,fontWeight:600,fontSize:11,cursor:'pointer',fontFamily:'inherit'}}>
@@ -690,7 +1141,11 @@ export default function ProposalTool(){
             </div>
           )}
           <div style={{display:'inline-block'}} ref={outputRef}>
-            <PreviewCard brand={brand} merchant={merchant} existing={existing} options={options} customerLogo={customerLogo} repName={repName} amexDirect={amexDirect} amexQrDataUrl={amexQrDataUrl} expiryDays={expiryDays} customNote={customNote} markAsDraft={markAsDraft} venueNotes={venueNotes} contractTerm={contractTerm}/>
+            {activeTab==='recontract'?(
+              <PreviewCard brand={brand} merchant={merchant} existing={existing} options={options} customerLogo={customerLogo} repName={repName} amexDirect={amexDirect} amexQrDataUrl={amexQrDataUrl} expiryDays={expiryDays} customNote={customNote} markAsDraft={markAsDraft} venueNotes={venueNotes} contractTerm={contractTerm}/>
+            ):(
+              <NewBusinessPreviewCard brand={brand} merchant={nbMerchant} options={nbOptions} customerLogo={nbCustomerLogo} repName={nbRepName} amexDirect={nbAmexDirect} amexQrDataUrl={nbAmexQrDataUrl} expiryDays={nbExpiryDays} customNote={nbCustomNote} markAsDraft={nbMarkAsDraft} venueNotes={nbVenueNotes} contractTerm={nbContractTerm} cardMix={cardMix} competitor={competitor}/>
+            )}
           </div>
           {renderedPng&&(
             <div style={{marginTop:16}}>
