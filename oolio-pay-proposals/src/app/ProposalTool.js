@@ -59,10 +59,13 @@ const emptyCompetitor = () => ({
   terminalCount:'', terminalMonthlyCost:'', saasFee:'', inclusions:'',
 });
 const emptyCardMix = () => ({ amexPct:'', intlPct:'' });
+// Full text for feature 3: 'Advanced OrderMate OPAY app for complete integrated
+// pay@table solution with customisable tipping and on-screen splitting by
+// product, guest or custom amounts' — shown abbreviated below to fit the strip.
 const FEATURES_GRID = [
   'All-in-one POS & Payments Support 24/7',
   'Daily Business Day Settlements',
-  'Advanced OrderMate OPAY app for complete integrated pay@table solution with customisable tipping and on-screen splitting by product, guest or custom amounts',
+  'Advanced OPAY pay@table — customisable tipping & on-screen splitting',
   'Integrated MOTO',
   'OolioPay Insights Mobile App',
   'Fully secure integrated referenced refunds',
@@ -416,17 +419,19 @@ function NewBusinessPreviewCard({brand,merchant,options,customerLogo,repName,ame
   };
 
   const FeaturesGrid = () => (
-    <div style={{background:'#f7f7f8',padding:'12px 20px',marginTop:14,borderTop:'1px solid #eee',borderBottom:'1px solid #eee'}}>
-      <div style={{fontSize:10,fontWeight:800,color:b.primary,textTransform:'uppercase',letterSpacing:1,textAlign:'center',marginBottom:8}}>
+    <div style={{marginTop:14}}>
+      <div style={{textAlign:'center',padding:'14px 0',fontSize:9,fontWeight:800,color:b.primary,textTransform:'uppercase',letterSpacing:2,opacity:0.7}}>
         Payments Built for Hospitality
       </div>
-      <div style={{display:'grid',gridTemplateColumns:'repeat(3, 1fr)',rowGap:6,columnGap:16}}>
-        {FEATURES_GRID.map((f,i)=>(
-          <div key={i} style={{display:'flex',alignItems:'flex-start',gap:6}}>
-            <span style={{color:b.primary,fontSize:10,fontWeight:800,flexShrink:0,lineHeight:1.4}}>✓</span>
-            <span style={{fontSize:9,color:'#555',lineHeight:1.4}}>{f}</span>
-          </div>
-        ))}
+      <div style={{background:b.primary+'08',borderTop:`1px solid ${b.primary}12`,borderBottom:`1px solid ${b.primary}12`,padding:'12px 28px'}}>
+        <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gridTemplateRows:'repeat(3, auto)',gridAutoFlow:'column',gap:'8px 32px'}}>
+          {FEATURES_GRID.map((f,i)=>(
+            <div key={i} style={{display:'flex',alignItems:'flex-start',gap:6}}>
+              <span style={{color:b.primary,fontWeight:800,fontSize:10,flexShrink:0,marginTop:1}}>✓</span>
+              <span style={{fontSize:9,color:'#444',lineHeight:1.45}}>{f}</span>
+            </div>
+          ))}
+        </div>
       </div>
     </div>
   );
@@ -725,6 +730,13 @@ export default function ProposalTool(){
     }catch(err){console.error('Copy failed:',err);alert('Could not copy link. Check console.');}
   },[]);
 
+  // New Business proposals are always OrderMate-branded — force the brand
+  // whenever that tab becomes active (covers the tab click as well as a
+  // restored link/draft/recent-proposal that lands on this tab).
+  useEffect(()=>{
+    if(activeTab==='newbusiness'&&brand!=='ordermate')setBrand('ordermate');
+  },[activeTab,brand]);
+
   useEffect(()=>{
     if(!amexDirect){setAmexQrDataUrl(null);return;}
     let cancelled=false;
@@ -934,13 +946,15 @@ export default function ProposalTool(){
           <button onClick={clearDraft} style={{padding:'6px 14px',borderRadius:20,border:'2px solid rgba(255,255,255,0.3)',background:'transparent',color:'#fff',fontWeight:700,fontSize:11,cursor:'pointer',fontFamily:'inherit'}}>
             Clear / Start New
           </button>
-          <div style={{display:'flex',gap:8}}>
-            {['oolio','ordermate'].map(bk=>(
-              <button key={bk} onClick={()=>setBrand(bk)} style={{padding:'6px 16px',borderRadius:20,border:brand===bk?'2px solid #fff':'2px solid rgba(255,255,255,0.3)',background:brand===bk?'rgba(255,255,255,0.2)':'transparent',color:'#fff',fontWeight:700,fontSize:12,cursor:'pointer',fontFamily:'inherit'}}>
-                {BRANDS[bk].name}
-              </button>
-            ))}
-          </div>
+          {activeTab==='recontract' && (
+            <div style={{display:'flex',gap:8}}>
+              {['oolio','ordermate'].map(bk=>(
+                <button key={bk} onClick={()=>setBrand(bk)} style={{padding:'6px 16px',borderRadius:20,border:brand===bk?'2px solid #fff':'2px solid rgba(255,255,255,0.3)',background:brand===bk?'rgba(255,255,255,0.2)':'transparent',color:'#fff',fontWeight:700,fontSize:12,cursor:'pointer',fontFamily:'inherit'}}>
+                  {BRANDS[bk].name}
+                </button>
+              ))}
+            </div>
+          )}
         </div>
       </div>
 
