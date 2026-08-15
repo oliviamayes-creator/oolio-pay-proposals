@@ -65,10 +65,10 @@ const emptyCardMix = () => ({ amexPct:'', intlPct:'' });
 const FEATURES_GRID = [
   'All-in-one POS & Payments Support 24/7',
   'Daily Business Day Settlements',
-  'Advanced OPAY pay@table — customisable tipping & on-screen splitting',
+  'Advanced OPAY Pay@Table — Customisable Tipping & On-Screen Splitting',
   'Integrated MOTO',
   'OolioPay Insights Mobile App',
-  'Fully secure integrated referenced refunds',
+  'Fully Secure Integrated Referenced Refunds',
 ];
 const EXPIRY_OPTIONS = [
   { id:'7', label:'7 days' },
