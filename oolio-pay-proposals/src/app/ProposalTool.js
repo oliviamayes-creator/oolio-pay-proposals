@@ -416,15 +416,15 @@ function NewBusinessPreviewCard({brand,merchant,options,customerLogo,repName,ame
   };
 
   const FeaturesGrid = () => (
-    <div style={{margin:'14px 28px 0'}}>
-      <div style={{fontSize:10,fontWeight:800,color:b.primary,textTransform:'uppercase',letterSpacing:1,textAlign:'center',marginBottom:10}}>
-        What&apos;s included with every OolioPay x OrderMate merchant
+    <div style={{background:'#f7f7f8',padding:'12px 20px',marginTop:14,borderTop:'1px solid #eee',borderBottom:'1px solid #eee'}}>
+      <div style={{fontSize:10,fontWeight:800,color:b.primary,textTransform:'uppercase',letterSpacing:1,textAlign:'center',marginBottom:8}}>
+        Payments Built for Hospitality
       </div>
-      <div style={{display:'grid',gridTemplateColumns:'repeat(3, 1fr)',gap:10}}>
+      <div style={{display:'grid',gridTemplateColumns:'repeat(3, 1fr)',rowGap:6,columnGap:16}}>
         {FEATURES_GRID.map((f,i)=>(
-          <div key={i} style={{display:'flex',alignItems:'flex-start',gap:6,background:b.primary+'0a',borderRadius:8,padding:'8px 10px'}}>
-            <span style={{color:b.primary,fontSize:11,fontWeight:800,flexShrink:0,lineHeight:1.4}}>✓</span>
-            <span style={{fontSize:8,color:'#555',lineHeight:1.4}}>{f}</span>
+          <div key={i} style={{display:'flex',alignItems:'flex-start',gap:6}}>
+            <span style={{color:b.primary,fontSize:10,fontWeight:800,flexShrink:0,lineHeight:1.4}}>✓</span>
+            <span style={{fontSize:9,color:'#555',lineHeight:1.4}}>{f}</span>
           </div>
         ))}
       </div>
