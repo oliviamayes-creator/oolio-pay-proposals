@@ -967,7 +967,7 @@ export default function ProposalTool(){
           <div style={{background:'#fff',borderRadius:12,padding:18,marginBottom:16,boxShadow:'0 1px 6px rgba(0,0,0,0.06)'}}>
             <div style={sectionTitle(b)}>Merchant Info</div>
             <Field label="Merchant / Venue Name" value={merchant.name} onChange={v=>setMerchant({...merchant,name:v})} placeholder="e.g. The Local Pub"/>
-            <Field label="Monthly TTV ($)" value={merchant.ttv} onChange={v=>setMerchant({...merchant,ttv:v})} placeholder="300000" suffix="$" warning={!merchant.ttv?'TTV required for T&Cs':null}/>
+            <Field label="Monthly TTV ($)" value={merchant.ttv} onChange={v=>setMerchant({...merchant,ttv:v.replace(/[^\d]/g,'')})} placeholder="300000" suffix="$" warning={!merchant.ttv?'TTV required for T&Cs':null}/>
             <Field label="Venues (optional)" value={venueNotes} onChange={setVenueNotes} placeholder="e.g. 3 venues — Sydney CBD, Parramatta, Bondi"/>
             <Field label="Prepared By" value={repName} onChange={setRepName} placeholder="e.g. Olivia Mayes"/>
             <Select label="Proposal Valid For" value={expiryDays} onChange={setExpiryDays} options={EXPIRY_OPTIONS}/>
@@ -1028,7 +1028,7 @@ export default function ProposalTool(){
           <div style={{background:'#fff',borderRadius:12,padding:18,marginBottom:16,boxShadow:'0 1px 6px rgba(0,0,0,0.06)'}}>
             <div style={sectionTitle(b)}>Merchant Info</div>
             <Field label="Merchant / Venue Name" value={nbMerchant.name} onChange={v=>setNbMerchant({...nbMerchant,name:v})} placeholder="e.g. The Local Pub"/>
-            <Field label="Monthly TTV ($)" value={nbMerchant.ttv} onChange={v=>setNbMerchant({...nbMerchant,ttv:v})} placeholder="300000" suffix="$" warning={!nbMerchant.ttv?'TTV required for T&Cs':null}/>
+            <Field label="Monthly TTV ($)" value={nbMerchant.ttv} onChange={v=>setNbMerchant({...nbMerchant,ttv:v.replace(/[^\d]/g,'')})} placeholder="300000" suffix="$" warning={!nbMerchant.ttv?'TTV required for T&Cs':null}/>
             <Field label="Venues (optional)" value={nbVenueNotes} onChange={setNbVenueNotes} placeholder="e.g. 3 venues — Sydney CBD, Parramatta, Bondi"/>
             <Field label="Prepared By" value={nbRepName} onChange={setNbRepName} placeholder="e.g. Olivia Mayes"/>
             <Select label="Proposal Valid For" value={nbExpiryDays} onChange={setNbExpiryDays} options={EXPIRY_OPTIONS}/>
