@@ -544,6 +544,11 @@ function NewBusinessPreviewCard({brand,merchant,options,customerLogo,repName,ame
             )}
           </div>
         )}
+        {merchant.ttv&&(
+          <div style={{fontSize:8,color:'#aaa',lineHeight:1.5,marginBottom:4}}>
+            *Terms &amp; Conditions apply. Discounts and rates are applicable based on a minimum monthly card transaction volume of 80% of {fmtDollar(merchant.ttv)}.
+          </div>
+        )}
         <div style={{fontSize:8,color:'#aaa',lineHeight:1.5}}>
           All rates and fees shown are exclusive of GST. Figures shown are indicative estimates only based on provided transaction volumes. This proposal is indicative only and subject to formal agreement.{amexDirect?' American Express merchant fees are billed directly by American Express and are not included in the rates outlined in this proposal.':''}
         </div>
